@@ -75,10 +75,10 @@ replace github.com/infrata/infrata => <path to a checkout>
 Nothing else is needed: the SDK and everything it depends on is the standard library only, so
 there is no other third-party dependency to pull in.
 
-Your module's own `go` directive must be at least infrata's own — 1.27 as of 2026-09-13. Set it
-too low and the build fails with Go's ordinary "module requires go >= X" error, which does not name
-the dependency that raised the requirement; if that happens, check infrata's `go.mod` before
-assuming the problem is elsewhere.
+Your module's own `go` directive must be at least infrata's own — 1.27 as of 2026-09-13. With
+`GOTOOLCHAIN=auto` (the default), Go just fetches a new enough toolchain; with a local toolchain
+too old to build it, the build fails with `go: <module>@<version> requires go >= X (running go Y;
+GOTOOLCHAIN=local)`, which does name the module whose requirement it is.
 
 ---
 
