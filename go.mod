@@ -1,6 +1,6 @@
 module github.com/infrata/infrata-provider-fake
 
-go 1.24.13
+go 1.27.0
 
 require github.com/infrata/infrata v0.0.0
 
