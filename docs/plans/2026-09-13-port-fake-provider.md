@@ -2145,3 +2145,413 @@ CLAUDE.md said nothing was built; future sessions would plan work that is done."
 
 Then use superpowers:requesting-code-review for a whole-branch review, and
 superpowers:finishing-a-development-branch to integrate.
+
+---
+
+### Task 11: `plugin.yaml`, and a release that refuses to publish a version disagreement
+
+Added 2026-09-13 at the user's direction, against infrata `PLAN.md` §31.2 (the agreed manifest).
+§31.2: "Its release workflow must assert that THREE things agree: the git tag, the manifest's
+`version`, and the binary's `Version()`." Validating the manifest's own format waits on infrata
+publishing a parser (user decision); this task does not parse YAML in Go.
+
+**Files:**
+- Create: `plugin.yaml`, `scripts/release-check`, `scripts/build-release`, `scripts/scripts_test.go`,
+  `.github/workflows/release.yml`
+- Modify: `internal/fake/plugin.go` (the `Version` default)
+
+**Interfaces:**
+- Consumes: `cmd/infrata-plugin-fake` (Task 5); `internal/fake.Version` as the `-ldflags -X` target;
+  the SDK handshake line `{"protocol":1,"name":"fake","version":"<v>"}`, printed when the binary runs
+  with `INFRATA_PLUGIN_COOKIE` set and empty stdin (verified: exit 0).
+- Produces: `plugin.yaml` (Task 12 validates it); archives named
+  `infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz` (`.zip` for windows) plus `SHA256SUMS`.
+
+**R9:** `Version` defaults to `"0.0.0-dev"`, stamped only by a release, as infrata's own is (§61.1).
+With a default equal to the manifest's version, an unstamped binary passes the three-way check, and a
+broken `-ldflags` path can never be caught. That is what `TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion` proves.
+**R10:** the `linux/arm` build (GOARM=7) is archived as `…_linux_arm.tar.gz`, following §31.2's
+`<goos>_<goarch>` convention that `plugins install` constructs, not infrata's own `armv7` spelling.
+
+- [ ] **Step 1: Write the failing tests**
+
+`scripts/scripts_test.go`:
+
+```go
+// Package scripts tests the release scripts: they are what stands between a tag and a
+// published release whose manifest, archive names or binary disagree.
+package scripts
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// manifestVersion reads plugin.yaml's version, so these tests follow the manifest rather
+// than hard-coding a release number that the next bump would silently falsify.
+func manifestVersion(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../plugin.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "version:"); ok {
+			return strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	t.Fatal("plugin.yaml has no top-level version: line")
+	return ""
+}
+
+func run(t *testing.T, env []string, script string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("bash", append([]string{script}, args...)...)
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func TestReleaseCheckPassesWhenTagManifestAndBinaryAgree(t *testing.T) {
+	v := manifestVersion(t)
+	out, err := run(t, nil, "release-check", "v"+v)
+	if err != nil {
+		t.Fatalf("release-check v%s failed: %v\n%s", v, err, out)
+	}
+	if !strings.Contains(out, "all say "+v) {
+		t.Errorf("release-check did not confirm the agreement:\n%s", out)
+	}
+}
+
+// TestReleaseCheckRefusesATagTheManifestDoesNotName. Judging a release by a manifest that
+// describes a different version is the mistake §31.2 exists to prevent.
+func TestReleaseCheckRefusesATagTheManifestDoesNotName(t *testing.T) {
+	v := manifestVersion(t)
+	out, err := run(t, nil, "release-check", "v99.0.0")
+	if err == nil {
+		t.Fatalf("release-check accepted v99.0.0 against a manifest saying %s:\n%s", v, out)
+	}
+	for _, want := range []string{"99.0.0", v} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion. `go build -X` on a symbol that
+// does not exist is silently ignored, so a renamed Version variable would ship every
+// archive reporting 0.0.0-dev. This simulates exactly that drift.
+func TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion(t *testing.T) {
+	v := manifestVersion(t)
+	out, err := run(t,
+		[]string{"FAKE_VERSION_SYMBOL=github.com/infrata/infrata-provider-fake/internal/fake.NoSuchVariable"},
+		"release-check", "v"+v)
+	if err == nil {
+		t.Fatalf("release-check passed with a binary whose version was never stamped:\n%s", out)
+	}
+	if !strings.Contains(out, "0.0.0-dev") {
+		t.Errorf("the refusal does not say what the binary reported:\n%s", out)
+	}
+}
+
+// TestBuildReleaseNamesArchivesByTheInstallConvention. `infrata plugins install` constructs
+// the download name rather than reading it (§31.2), so a wrong name is an uninstallable release.
+func TestBuildReleaseNamesArchivesByTheInstallConvention(t *testing.T) {
+	v := manifestVersion(t)
+	dist := t.TempDir()
+	if out, err := run(t, []string{"PLATFORMS=linux/amd64 windows/amd64"}, "build-release", v, dist); err != nil {
+		t.Fatalf("build-release failed: %v\n%s", err, out)
+	}
+	stem := "infrata-plugin-fake_" + v + "_linux_amd64"
+	for _, name := range []string{stem + ".tar.gz", "infrata-plugin-fake_" + v + "_windows_amd64.zip"} {
+		if _, err := os.Stat(filepath.Join(dist, name)); err != nil {
+			t.Errorf("missing %s: %v", name, err)
+		}
+	}
+
+	f, err := os.Open(filepath.Join(dist, stem+".tar.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[h.Name] = true
+	}
+	for _, want := range []string{stem + "/infrata-plugin-fake", stem + "/plugin.yaml", stem + "/README.md"} {
+		if !got[want] {
+			t.Errorf("%s.tar.gz does not contain %s; it holds %v", stem, want, got)
+		}
+	}
+}
+```
+
+`plugin.yaml` (repo root). The `version` is the NEXT release, since this file on the default branch
+describes unreleased code. `infrata` is omitted: no infrata release exists to name, and §31.2 makes
+absence the honest form of "unconstrained".
+
+```yaml
+# plugin.yaml: what this plugin is, and what it works with. infrata PLAN.md §31.2.
+# Read at a release TAG, never at the default branch, which describes unreleased code.
+manifest: 1
+name: fake
+version: 0.1.0
+protocol: [1]
+platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
+description: A fake provider for testing infrata without a cloud account.
+source: https://github.com/infrata/infrata-provider-fake
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test -count=1 ./scripts/`
+Expected: FAIL — `bash: release-check: No such file or directory` (and the same for `build-release`).
+
+- [ ] **Step 3: Write `scripts/release-check`** (mode 0755)
+
+```bash
+#!/usr/bin/env bash
+# release-check TAG: refuse to release unless the git tag, plugin.yaml's version and the version
+# the built binary reports all agree (infrata PLAN.md §31.2). The manifest is authoritative and
+# the binary secondary; this check is what blocks a release where they disagree.
+#
+# FAKE_VERSION_SYMBOL overrides the -ldflags -X target. It exists so a test can simulate the
+# variable being renamed, which `go build -X` otherwise ignores in silence.
+set -euo pipefail
+
+tag="${1:?usage: scripts/release-check vMAJOR.MINOR.PATCH}"
+version="${tag#v}"
+if [[ "$tag" != v* || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "release-check: tag '$tag' is not vMAJOR.MINOR.PATCH" >&2
+  exit 1
+fi
+
+cd "$(dirname "$0")/.."
+
+manifest_version="$(sed -n 's/^version:[[:space:]]*//p' plugin.yaml | tr -d "\"' ")"
+if [[ -z "$manifest_version" ]]; then
+  echo "release-check: plugin.yaml has no top-level version: line" >&2
+  exit 1
+fi
+if [[ "$manifest_version" != "$version" ]]; then
+  echo "release-check: tag $tag names version $version, but plugin.yaml says $manifest_version" >&2
+  exit 1
+fi
+
+symbol="${FAKE_VERSION_SYMBOL:-github.com/infrata/infrata-provider-fake/internal/fake.Version}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrata-plugin-fake" ./cmd/infrata-plugin-fake
+
+# The binary refuses to start without the host's cookie. With it and an empty stdin, it writes
+# its handshake {"protocol","name","version"} and exits. Captured whole, not piped to head,
+# so pipefail cannot turn an early-closed pipe into a false failure.
+out="$(INFRATA_PLUGIN_COOKIE=release-check "$work/infrata-plugin-fake" </dev/null 2>/dev/null)"
+handshake="${out%%$'\n'*}"
+reported="$(printf '%s' "$handshake" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+if [[ "$reported" != "$version" ]]; then
+  echo "release-check: the binary reports version '${reported}', not $version (handshake: $handshake)" >&2
+  echo "The -ldflags symbol ${symbol} does not set internal/fake.Version; every archive would report the wrong version." >&2
+  exit 1
+fi
+echo "release-check: tag, plugin.yaml and binary all say $version"
+```
+
+- [ ] **Step 4: Write `scripts/build-release`** (mode 0755)
+
+```bash
+#!/usr/bin/env bash
+# build-release VERSION OUTDIR: cross-compile infrata-plugin-fake for every platform plugin.yaml
+# lists, archived under the name `infrata plugins install` constructs (infrata PLAN.md §31.2):
+# infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz, and .zip for windows.
+#
+# PLATFORMS (space-separated GOOS/GOARCH) overrides the manifest's list, so a test can build two
+# platforms instead of eight.
+set -euo pipefail
+
+version="${1:?usage: scripts/build-release VERSION OUTDIR}"
+out="${2:?usage: scripts/build-release VERSION OUTDIR}"
+cd "$(dirname "$0")/.."
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"
+
+platforms="${PLATFORMS:-$(sed -n 's/^platforms:[[:space:]]*\[\(.*\)\][[:space:]]*$/\1/p' plugin.yaml | tr ',' ' ')}"
+if [[ -z "${platforms// /}" ]]; then
+  echo "build-release: plugin.yaml has no single-line platforms: [...] list" >&2
+  exit 1
+fi
+
+for platform in $platforms; do
+  goos="${platform%/*}"
+  goarch="${platform#*/}"
+  name="infrata-plugin-fake"
+  if [[ "$goos" == windows ]]; then name="$name.exe"; fi
+  goarm=""
+  if [[ "$goarch" == arm ]]; then goarm=7; fi   # R10: archived as _linux_arm, per §31.2's convention
+  stem="infrata-plugin-fake_${version}_${goos}_${goarch}"
+
+  work="$(mktemp -d)"
+  mkdir "$work/$stem"
+  echo "==> $platform"
+  # CGO_ENABLED=0: a static binary that runs without a matching libc. -trimpath: no build-machine
+  # paths. Not -s -w: a stack trace is the whole diagnostic when a plugin panics.
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" \
+    go build -trimpath \
+      -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=${version}" \
+      -o "$work/$stem/$name" ./cmd/infrata-plugin-fake
+  cp README.md plugin.yaml "$work/$stem/"
+  if [[ "$goos" == windows ]]; then
+    (cd "$work" && zip -qr "$out/$stem.zip" "$stem")
+  else
+    tar -czf "$out/$stem.tar.gz" -C "$work" "$stem"
+  fi
+  rm -rf "$work"
+done
+```
+
+- [ ] **Step 5: Change the `Version` default (R9)**
+
+In `internal/fake/plugin.go` replace the `Version` declaration and its comment with:
+
+```go
+// Version is reported in the handshake and checked against a project's `plugins:`
+// constraint. It is "0.0.0-dev" in every build a release did not stamp: a checkout
+// build claiming to be a release is how a bug report turns into an afternoon, and a
+// default equal to plugin.yaml's version would let a broken -ldflags path pass the
+// release check. scripts/build-release stamps it:
+// -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=1.2.3".
+var Version = "0.0.0-dev"
+```
+
+- [ ] **Step 6: Run to verify pass**
+
+Run: `chmod +x scripts/release-check scripts/build-release && gofmt -l . && go vet ./... && go test -count=1 ./...`
+Expected: `ok` for `internal/fake` and `scripts`.
+
+- [ ] **Step 7: Write `.github/workflows/release.yml`**
+
+```yaml
+name: Release
+
+# Triggered by a version tag. Mirrors infrata's own release workflow: one runner cross-compiles
+# every platform, the version is stamped by -ldflags and nowhere else, and nothing is published
+# unless the tag, plugin.yaml's version and the binary's reported version agree (PLAN.md §31.2).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the release
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      # go.mod replaces github.com/infrata/infrata with ../ilan, so both repositories are checked
+      # out side by side and every step runs from this one's directory.
+      - uses: actions/checkout@v4
+        with:
+          path: infrata-provider-fake
+      - uses: actions/checkout@v4
+        with:
+          repository: infrata/infrata
+          path: ilan
+          # infrata is not public yet; a token with read access to it. Remove once it is.
+          token: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      - name: Verify the tag, the manifest and the binary agree
+        working-directory: infrata-provider-fake
+        run: scripts/release-check "$GITHUB_REF_NAME"
+
+      - name: Test, including the compliance suite against infrata
+        working-directory: infrata-provider-fake
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -count=1 ./...
+          go test -tags e2e -count=1 ./e2e/
+
+      - name: Build every platform in plugin.yaml
+        working-directory: infrata-provider-fake
+        run: scripts/build-release "${GITHUB_REF_NAME#v}" dist
+
+      - name: Checksums
+        working-directory: infrata-provider-fake/dist
+        run: sha256sum ./*.tar.gz ./*.zip > SHA256SUMS && cat SHA256SUMS
+
+      - name: Publish the release
+        working-directory: infrata-provider-fake
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag dist/*
+```
+
+The workflow cannot run here: there is no git remote. Check what can be checked locally, and record
+each result in the report:
+- The file parses as YAML: `python3 -c 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))' .github/workflows/release.yml`.
+  If PyYAML is absent, say so. Do not add a dependency to get it.
+- Run the release steps by hand, in order:
+  `scripts/release-check v0.1.0 && scripts/build-release 0.1.0 /tmp/fake-dist && (cd /tmp/fake-dist && sha256sum ./*.tar.gz ./*.zip)`.
+  Expected: 8 archives, including `infrata-plugin-fake_0.1.0_linux_arm.tar.gz` and two `.zip`s.
+- Unpack the `linux_amd64` archive, run its binary with the cookie and empty stdin, and confirm the
+  handshake reports `0.1.0`.
+
+- [ ] **Step 8: Sabotage**
+
+One at a time; confirm the named test fails; revert by editing back:
+- `release-check`: `if [[ "$manifest_version" != "$version" ]]` → `if false` → `TestReleaseCheckRefusesATagTheManifestDoesNotName` (the check then builds 99.0.0, which agrees with itself).
+- `release-check`: `if [[ "$reported" != "$version" ]]` → `if false` → `TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion`.
+- `plugin.go`: `var Version = "0.0.0-dev"` → `var Version = "0.1.0"` → `TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion` (the unstamped binary now matches the manifest by accident). This is R9's evidence.
+- `build-release`: `if [[ "$goos" == windows ]]; then` (the archive branch) → `if false; then` → `TestBuildReleaseNamesArchivesByTheInstallConvention` (no `.zip`).
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add plugin.yaml scripts/release-check scripts/build-release scripts/scripts_test.go .github/workflows/release.yml internal/fake/plugin.go
+git commit -m "release: plugin.yaml, and a release that refuses a version disagreement
+
+infrata's §31.2 makes the manifest authoritative and requires a release to fail unless the
+tag, the manifest's version and the binary's reported version agree; a drift test is
+something a person can delete, a release gate is not. The unstamped default becomes
+0.0.0-dev, because a default equal to the manifest would let a broken -ldflags path pass.
+Archives follow the name install will construct.
+Sabotage-verified: manifest comparison, binary comparison, dev default, windows archive." -- plugin.yaml scripts/release-check scripts/build-release scripts/scripts_test.go .github/workflows/release.yml internal/fake/plugin.go
+```
+
+---
+
+### Task 12: Validate `plugin.yaml` with infrata's parser (GATED)
+
+Waits on infrata publishing a manifest parser (requested 2026-09-13, user decision). When it exists,
+this task is written against its real API: a normal-suite test that parses `plugin.yaml` with it,
+validates it, and asserts `name == PluginName` and `protocol` contains `pluginproto.Version`; plus an
+e2e subtest that `infrata version --output`'s `plugin protocol` set intersects `protocol`. It is not
+specified further here, because an API that does not exist yet cannot be written against honestly.
