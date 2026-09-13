@@ -37,8 +37,8 @@ dependency is one an outside author has too.
 **Built and passing.** The plugin (`internal/fake/`: cloud file, schemas, CRUD with attribute
 removal, discover/import, failure/latency injection, a per-file lock, plugin configuration) and its
 binary (`cmd/infrata-plugin-fake/`) are complete and documented, with a version-gated release
-workflow that has not been exercised yet (no tag has been pushed, and there is no git remote or
-`INFRATA_CHECKOUT_TOKEN` secret configured for it to run against). The implementation followed
+workflow that has not been exercised yet (no tag has been pushed, and no `INFRATA_CHECKOUT_TOKEN`
+secret is configured for it to check infrata out with). The implementation followed
 `docs/plans/2026-09-13-port-fake-provider.md`; read that plan (including its verification log and
 the ledger it summarizes) before touching this repository's design, rather than re-planning from
 scratch.
