@@ -7,8 +7,8 @@ no network and no credentials.
 
 ## Build and install
 
-This plugin builds against a sibling checkout of infrata, because `github.com/infrata/infrata` is
-not yet published as a fetchable module. Lay the two repositories out side by side:
+This plugin builds against a sibling checkout of infrata, because infrata stays private until it is
+feature complete, so `github.com/infrata/infrata` is not a fetchable module. Lay the two repositories out side by side:
 
 ```
 some-directory/
@@ -410,10 +410,12 @@ infrata used to carry this fake provider in-tree, serving `test.network`, `test.
 is named `fake`, not `test`.
 
 The implicit (unnamed) instance's cloud file keeps the same path it always had,
-`.infra/fake-cloud.json`, so an existing cloud file needs no migration. A state file that names
-`test.*` resources is not migrated by this plugin, and those resources keep working only for as
-long as infrata still ships its builtin `test` provider alongside this one; moving a project onto
-`infrata-plugin-fake` means re-creating its resources under the `fake.*` type names.
+`.infra/fake-cloud.json`, so an existing cloud file needs no migration. infrata no longer ships a
+built-in provider, and it migrates the state file for you: when it reads a version-1 state file it
+rewrites every `test.*` type to `fake.*`, and renames an instance recorded as `test` (the name the
+implicit instance took when a project declared no `providers:` block) to `fake`. An instance with
+any other name, such as `providers: [{plugin: test, name: main}]`, keeps it; change that entry's
+`plugin:` to `fake`.
 
 ## Development
 
