@@ -65,7 +65,9 @@ stamped only by `-ldflags` at release (Ruling R9), so an unstamped build cannot 
 project's `plugins:` constraint or the release gate.
 
 **Known limits:**
-- No migration path from a `test.*` state file (D1): renaming the type prefix from `test.` to
+- The `test.*` → `fake.*` rename (D1) is migrated by infrata, not here: state version 1 → 2
+  (infrata `internal/state/migrations.go`) rewrites the types and the implicit `test` instance
+  name. This plugin itself carries no migration code. Renaming the type prefix from `test.` to
   `fake.` is a breaking change for any project or state file using infrata's old in-tree provider.
   Infrata's builtin `test` keeps serving those until infrata removes it.
 - Symlinked paths to the same cloud file are not unified into one lock (D5) — two different paths
