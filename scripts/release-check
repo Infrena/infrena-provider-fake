@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# release-check TAG: refuse to release unless the git tag, plugin.yaml's version and the version
+# the built binary reports all agree (infrata PLAN.md §31.2). The manifest is authoritative and
+# the binary secondary; this check is what blocks a release where they disagree.
+#
+# FAKE_VERSION_SYMBOL overrides the -ldflags -X target. It exists so a test can simulate the
+# variable being renamed, which `go build -X` otherwise ignores in silence.
+set -euo pipefail
+
+tag="${1:?usage: scripts/release-check vMAJOR.MINOR.PATCH}"
+version="${tag#v}"
+if [[ "$tag" != v* || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "release-check: tag '$tag' is not vMAJOR.MINOR.PATCH" >&2
+  exit 1
+fi
+
+cd "$(dirname "$0")/.."
+
+manifest_version="$(sed -n 's/^version:[[:space:]]*//p' plugin.yaml | tr -d "\"' ")"
+if [[ -z "$manifest_version" ]]; then
+  echo "release-check: plugin.yaml has no top-level version: line" >&2
+  exit 1
+fi
+if [[ "$manifest_version" != "$version" ]]; then
+  echo "release-check: tag $tag names version $version, but plugin.yaml says $manifest_version" >&2
+  exit 1
+fi
+
+symbol="${FAKE_VERSION_SYMBOL:-github.com/infrata/infrata-provider-fake/internal/fake.Version}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrata-plugin-fake" ./cmd/infrata-plugin-fake
+
+# The binary refuses to start without the host's cookie. With it and an empty stdin, it writes
+# its handshake {"protocol","name","version"} and exits. Captured whole, not piped to head,
+# so pipefail cannot turn an early-closed pipe into a false failure.
+out="$(INFRATA_PLUGIN_COOKIE=release-check "$work/infrata-plugin-fake" </dev/null 2>/dev/null)"
+handshake="${out%%$'\n'*}"
+reported="$(printf '%s' "$handshake" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+if [[ "$reported" != "$version" ]]; then
+  echo "release-check: the binary reports version '${reported}', not $version (handshake: $handshake)" >&2
+  echo "The -ldflags symbol ${symbol} does not set internal/fake.Version; every archive would report the wrong version." >&2
+  exit 1
+fi
+echo "release-check: tag, plugin.yaml and binary all say $version"

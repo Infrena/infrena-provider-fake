@@ -1,0 +1,9 @@
+# plugin.yaml: what this plugin is, and what it works with. infrata PLAN.md §31.2.
+# Read at a release TAG, never at the default branch, which describes unreleased code.
+manifest: 1
+name: fake
+version: 0.1.0
+protocol: [1]
+platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
+description: A fake provider for testing infrata without a cloud account.
+source: https://github.com/infrata/infrata-provider-fake

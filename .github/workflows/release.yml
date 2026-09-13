@@ -1,0 +1,63 @@
+name: Release
+
+# Triggered by a version tag. Mirrors infrata's own release workflow: one runner cross-compiles
+# every platform, the version is stamped by -ldflags and nowhere else, and nothing is published
+# unless the tag, plugin.yaml's version and the binary's reported version agree (PLAN.md §31.2).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the release
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      # go.mod replaces github.com/infrata/infrata with ../ilan, so both repositories are checked
+      # out side by side and every step runs from this one's directory.
+      - uses: actions/checkout@v4
+        with:
+          path: infrata-provider-fake
+      - uses: actions/checkout@v4
+        with:
+          repository: infrata/infrata
+          path: ilan
+          # infrata is not public yet; a token with read access to it. Remove once it is.
+          token: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      - name: Verify the tag, the manifest and the binary agree
+        working-directory: infrata-provider-fake
+        run: scripts/release-check "$GITHUB_REF_NAME"
+
+      - name: Test, including the compliance suite against infrata
+        working-directory: infrata-provider-fake
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -count=1 ./...
+          go test -tags e2e -count=1 ./e2e/
+
+      - name: Build every platform in plugin.yaml
+        working-directory: infrata-provider-fake
+        run: scripts/build-release "${GITHUB_REF_NAME#v}" dist
+
+      - name: Checksums
+        working-directory: infrata-provider-fake/dist
+        run: sha256sum ./*.tar.gz ./*.zip > SHA256SUMS && cat SHA256SUMS
+
+      - name: Publish the release
+        working-directory: infrata-provider-fake
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag dist/*

@@ -13,8 +13,12 @@ import (
 )
 
 // Version is reported in the handshake and checked against a project's `plugins:`
-// constraint. Releases set it: -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=1.2.3".
-var Version = "0.1.0"
+// constraint. It is "0.0.0-dev" in every build a release did not stamp: a checkout
+// build claiming to be a release is how a bug report turns into an afternoon, and a
+// default equal to plugin.yaml's version would let a broken -ldflags path pass the
+// release check. scripts/build-release stamps it:
+// -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=1.2.3".
+var Version = "0.0.0-dev"
 
 // Plugin is the fake provider before configuration: its schemas, and how to build one
 // configured instance of itself.
