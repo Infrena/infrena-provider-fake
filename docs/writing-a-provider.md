@@ -934,10 +934,10 @@ against a checkout with a `replace` directive:
 
 ```
 // go.mod:10
-replace github.com/infrata/infrata => ../ilan
+replace github.com/infrata/infrata => ../infrata
 ```
 
-This repository expects infrata checked out next to it as `../ilan`. The release workflow reproduces
+This repository expects infrata checked out next to it as `../infrata`. The release workflow reproduces
 that layout by checking out both repositories side by side (`.github/workflows/release.yml:22-32`).
 Nothing else is needed: the SDK and protocol use only the standard library, so a plugin gains no
 third-party dependency from them (`PLAN.md` §31.1). When infrata is published, delete the `replace`
@@ -994,7 +994,7 @@ Every design decision below follows from those two facts.
 
 (`PLAN.md` §31.2, the key table.)
 
-Validate your own manifest with `pkg/pluginmanifest.Parse` (`ilan/pkg/pluginmanifest/manifest.go`'s
+Validate your own manifest with `pkg/pluginmanifest.Parse` (`infrata/pkg/pluginmanifest/manifest.go`'s
 `Parse`) — the same parser `infrata plugins install` will use — rather than a hand check a typo
 could pass.
 

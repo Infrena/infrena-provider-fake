@@ -65,11 +65,13 @@ indistinguishable from a hang.
 
 ### Depending on infrata
 
-Until `github.com/infrata/infrata` is published, a plugin needs a `replace` directive in its
-`go.mod` pointing at a checkout:
+`github.com/infrata/infrata` is not published as a fetchable module (it stays private until it is
+feature complete), so a plugin needs a `replace` directive in its `go.mod` pointing at a checkout.
+Clone infrata next to your plugin and point at the directory `git clone` creates, so a fresh clone of
+both repositories builds with no extra setup:
 
 ```
-replace github.com/infrata/infrata => <path to a checkout>
+replace github.com/infrata/infrata => ../infrata
 ```
 
 Nothing else is needed: the SDK and everything it depends on is the standard library only, so

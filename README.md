@@ -12,11 +12,11 @@ not yet published as a fetchable module. Lay the two repositories out side by si
 
 ```
 some-directory/
-├── ilan/                    # infrata itself
+├── infrata/                 # infrata itself
 └── infrata-provider-fake/   # this repository
 ```
 
-`go.mod`'s `replace github.com/infrata/infrata => ../ilan` assumes exactly that layout. Then:
+`go.mod`'s `replace github.com/infrata/infrata => ../infrata` assumes exactly that layout. Then:
 
 ```bash
 go build -o infrata-plugin-fake ./cmd/infrata-plugin-fake
@@ -432,7 +432,7 @@ source and this plugin, and runs the workflow above through both binaries for re
 go test -tags e2e -count=1 ./e2e/
 ```
 
-It builds infrata from `$INFRATA_SRC` (default `../ilan`, the same sibling checkout `go.mod`'s
+It builds infrata from `$INFRATA_SRC` (default `../infrata`, the same sibling checkout `go.mod`'s
 `replace` assumes), and skips itself with an `E2E SKIPPED:` line, rather than failing, when that
 checkout is not present. Run it before every release.
 

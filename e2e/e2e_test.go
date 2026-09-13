@@ -4,7 +4,7 @@
 //
 // Not part of `go test ./...`: it builds infrata from source, so it is slow and needs a
 // checkout. Run it with `go test -tags e2e -count=1 ./e2e/`. INFRATA_SRC points at the
-// checkout; the default is the sibling ../ilan that go.mod's replace already assumes.
+// checkout; the default is the sibling ../infrata that go.mod's replace already assumes.
 package e2e
 
 import (
@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 		defer os.RemoveAll(tmp)
 		src := os.Getenv("INFRATA_SRC")
 		if src == "" {
-			src = filepath.Join("..", "..", "ilan")
+			src = filepath.Join("..", "..", "infrata")
 		}
 		if _, err := os.Stat(filepath.Join(src, "cmd", "infrata")); err != nil {
 			skipReason = fmt.Sprintf("no infrata checkout at %s (set INFRATA_SRC): %v", src, err)

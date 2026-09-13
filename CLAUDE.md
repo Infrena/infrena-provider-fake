@@ -53,10 +53,10 @@ go test -tags e2e -count=1 -v ./e2e/      # compliance suite against a real infr
 
 `go test -count=1 ./...` already covers `scripts/` — there is no separate third layer to run for
 it. The `-tags e2e` suite builds `infrata` from a sibling checkout — `$INFRATA_SRC`, default
-`../ilan` — and drives it as a subprocess; it needs that checkout present and buildable, and is
+`../infrata` — and drives it as a subprocess; it needs that checkout present and buildable, and is
 slower than the plain suite, so it is not part of the default `go test ./...` run. (`$INFRATA_SRC`
 only chooses which infrata the CLI is built from for this suite — the plugin itself still compiles
-against `../ilan` through `go.mod`'s `replace`, so pointing `INFRATA_SRC` at a different checkout
+against `../infrata` through `go.mod`'s `replace`, so pointing `INFRATA_SRC` at a different checkout
 pairs a host built from one infrata with an SDK compiled against another.)
 
 Release plumbing: `plugin.yaml` (infrata `PLAN.md` §31.2), `scripts/release-check`,
@@ -70,8 +70,9 @@ project's `plugins:` constraint or the release gate.
   Infrata's builtin `test` keeps serving those until infrata removes it.
 - Symlinked paths to the same cloud file are not unified into one lock (D5) — two different paths
   naming the same file on disk can still race.
-- `go.mod` carries `replace github.com/infrata/infrata => ../ilan` (D7) until infrata publishes the
-  module; a sibling checkout named `ilan` is required to build or test this repository at all.
+- `go.mod` carries `replace github.com/infrata/infrata => ../infrata` (D7), and will for as long as
+  infrata stays private (until it is feature complete, infrata PLAN.md §31.1); a sibling checkout named
+  `infrata` — what `git clone` creates — is required to build or test this repository at all.
 
 ## Where the contract lives
 
@@ -100,7 +101,7 @@ second. It holds the API surface, the rules, and the failure modes.
 ## Stack and commands
 
 Go 1.27. Infrata's `go.mod` declares that floor as of 2026-09-13, so this module must declare it
-too or it will not build against `../ilan`. The error Go gives for a too-low `go` directive DOES
+too or it will not build against `../infrata`. The error Go gives for a too-low `go` directive DOES
 name the module whose requirement it is (`go: <module>@<version> requires go >= X (running go Y;
 …)`) — with `GOTOOLCHAIN=auto` (this repo's default), Go instead fetches a newer toolchain
 silently; the named-module error only surfaces under a pinned `GOTOOLCHAIN=local` on a too-old

@@ -19,7 +19,7 @@ jobs:
     env:
       GOTOOLCHAIN: local
     steps:
-      # go.mod replaces github.com/infrata/infrata with ../ilan, so both repositories are checked
+      # go.mod replaces github.com/infrata/infrata with ../infrata, so both repositories are checked
       # out side by side and every step runs from this one's directory.
       - uses: actions/checkout@v7
         with:
@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: infrata/infrata
-          path: ilan
+          path: infrata
           # infrata is not public yet; a token with read access to it. Remove once it is.
           token: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
 
