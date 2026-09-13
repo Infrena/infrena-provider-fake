@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> Project notes (source of truth): Obsidian Vault/projects/labs/infra-tool.md
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this
 repository.
 
@@ -32,8 +34,41 @@ dependency is one an outside author has too.
 
 ## Current state
 
-**Nothing is built yet.** This repository contains planning and authoring documentation only. See
-"How to plan this work" below; that is the first task.
+**Built and passing.** The plugin (`internal/fake/`: cloud file, schemas, CRUD with attribute
+removal, discover/import, failure/latency injection, a per-file lock, plugin configuration) and its
+binary (`cmd/infrata-plugin-fake/`) are complete, documented, and released via a version-gated
+workflow. The implementation followed `docs/plans/2026-09-13-port-fake-provider.md`; read that plan
+(including its verification log and the ledger it summarizes) before touching this repository's
+design, rather than re-planning from scratch.
+
+Three test layers, all green with `-count=1`:
+
+```bash
+go test -count=1 ./...                    # unit + pkg/plugintest protocol tests
+go test -tags e2e -count=1 -v ./e2e/      # compliance suite against a real infrata binary
+go test -count=1 ./scripts/               # release-check / build-release scripts
+```
+
+The `-tags e2e` suite builds `infrata` from a sibling checkout — `$INFRATA_SRC`, default `../ilan`
+— and drives it as a subprocess; it needs that checkout present and buildable, and is slower than
+the plain suite, so it is not part of the default `go test ./...` run.
+
+Release plumbing: `plugin.yaml` (infrata `PLAN.md` §31.2), `scripts/release-check`,
+`scripts/build-release`, `.github/workflows/release.yml`. `Version` defaults to `"0.0.0-dev"` and is
+stamped only by `-ldflags` at release (Ruling R9), so an unstamped build cannot silently satisfy a
+project's `plugins:` constraint or the release gate.
+
+**Known limits:**
+- No migration path from a `test.*` state file (D1): renaming the type prefix from `test.` to
+  `fake.` is a breaking change for any project or state file using infrata's old in-tree provider.
+  Infrata's builtin `test` keeps serving those until infrata removes it.
+- Symlinked paths to the same cloud file are not unified into one lock (D5) — two different paths
+  naming the same file on disk can still race.
+- `go.mod` carries `replace github.com/infrata/infrata => ../ilan` (D7) until infrata publishes the
+  module; a sibling checkout named `ilan` is required to build or test this repository at all.
+- `docs/plans/2026-09-13-port-fake-provider.md`'s Task 12 (validate `plugin.yaml` against an
+  infrata-provided manifest parser) is not done and cannot be: it waits on infrata publishing
+  `pkg/pluginmanifest`, which has been requested and does not exist yet.
 
 ## Where the contract lives
 
@@ -62,8 +97,11 @@ second. It holds the API surface, the rules, and the failure modes.
 ## Stack and commands
 
 Go 1.27. Infrata's `go.mod` declares that floor as of 2026-09-13, so this module must declare it
-too or it will not build against `../ilan` — and the error Go gives for a too-low `go` directive
-does not name the dependency that caused it.
+too or it will not build against `../ilan`. The error Go gives for a too-low `go` directive DOES
+name the module whose requirement it is (`go: <module>@<version> requires go >= X (running go Y;
+…)`) — with `GOTOOLCHAIN=auto` (this repo's default), Go instead fetches a newer toolchain
+silently; the named-module error only surfaces under a pinned `GOTOOLCHAIN=local` on a too-old
+toolchain.
 
 **Standard library plus `github.com/infrata/infrata` only.** The protocol deliberately adds no
 third-party dependency, and a fake provider that needed one would be evidence of a problem in the
@@ -79,73 +117,14 @@ gofmt -l .
 
 ## How to plan this work
 
-Do not start writing code. Plan first, and plan against what already exists.
-
-### 1. Read the existing implementation
-
-`providers/test/` in the infrata repository is a complete, working fake provider with years of
-decisions baked into it. This repository is a **port**, not a rewrite. Read all of it before
-planning:
-
-- `definitions.go` — three resource types (`test.network`, `test.database`, `test.application`)
-  with a dependency chain between them, a computed attribute on each, a sensitive attribute, a
-  composite (map) attribute, and static defaults.
-- `cloud.go` — the hand-editable JSON cloud file, its shape, and its atomic write.
-- `provider.go` — the `Provider` implementation, including `carryForward`, drift, failure
-  injection and latency simulation.
-
-For each behaviour you find, decide and write down: **does it port unchanged, does it change
-because the host now enforces it, or does it disappear?** The third category is real: several
-things `providers/test` does carefully are now the host's job, and duplicating them here would be
-worse than useless — it would hide a host bug behind a plugin working around it.
-
-Start that list from `PLAN.md` §31.1's "What the engine stops trusting a plugin with". Every item
-there is something to **delete** on the way in, not port.
-
-### 2. Decide the resource type names
-
-The host requires a plugin's types to be prefixed with the plugin's own name. This plugin is
-called `fake`, so it serves `fake.*` — and the existing types are `test.*`.
-
-**That rename is a breaking change to every project and state file that uses the fake provider.**
-It is also unavoidable: `test.network` from a plugin named `fake` is refused on load. Plan it
-explicitly. Decide, and record in the plan:
-
-- whether the plugin should instead be named `test`, keeping `test.*` and breaking nothing
-- what happens to an existing state file naming `test.network` if the types are renamed
-- which choice is better for the SECOND job above — the name a reader of this repository will
-  copy
-
-There is a real argument each way. Make the argument, pick one, and say what it costs. Do not
-default to whichever is less typing.
-
-### 3. Write the plan
-
-Use the `superpowers:writing-plans` skill if it is available. Save it to
-`docs/plans/YYYY-MM-DD-<name>.md`. The plan must produce working, testable software at each step,
-and every step must name the files it touches and the test that proves it.
-
-Suggested shape, to be argued with rather than followed:
-
-1. `go.mod`, `cmd/infrata-plugin-fake/main.go` calling `pluginsdk.Main`, and the schemas. Verify by
-   launching the binary from infrata and running `infrata explain fake.network`.
-2. The cloud file: load, save, atomic write.
-3. `Read`, `Create`, `Update`, `Delete`. Verify with a real `plan` → `apply` → re-plan clean.
-4. Drift: mutate the cloud file by hand, see `refresh` report it.
-5. `Discover` and `Import`.
-6. Failure and latency injection, which is what makes infrata's executor testable.
-7. The documentation deliverables below.
-
-### 4. Verify every claim in the plan against the code
-
-Before committing the plan, check each factual claim in it by reading the code it describes. This
-project has a history of plans whose governing claim was wrong — a plan that said a hyphen is not
-an identifier character when the parser accepted hyphens, and one that said dropping a value early
-would break a later feature when it would not. **A plan's confident sentence about code you have
-not read is the most expensive thing in it.**
-
-Record the verification in the plan, with its findings, including the ones that came back
-different from what you assumed.
+Already done. `docs/plans/2026-09-13-port-fake-provider.md` records the decisions (why `fake.*` not
+`test.*`, why `Update` deletes attributes the desired state omits, why the lock is per cloud file,
+why the manifest and release gate exist), the behaviour ledger of what ported unchanged, changed, or
+was deliberately dropped from infrata's in-tree `providers/test`, and a verification log of every
+factual claim checked against infrata's code — including the ones that came back different from
+what was assumed. Read it before planning new work here, rather than re-deriving any of this from
+scratch; the sections below on "Documentation this repository must ship" and "Rules for code in this
+repository" still apply to any change.
 
 ## Documentation this repository must ship
 

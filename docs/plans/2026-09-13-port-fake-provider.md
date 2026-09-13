@@ -11,7 +11,7 @@ lives in `internal/fake`, split by responsibility: schemas, the cloud file, the 
 the provider (operations). Unit tests call `Provider` directly; protocol tests go through infrata's
 public `pkg/plugintest`; a compliance suite behind `-tags e2e` drives a real `infrata` binary.
 
-**Tech Stack:** Go 1.24.13, standard library, `github.com/infrata/infrata` (via `replace => ../ilan`).
+**Tech Stack:** Go 1.27.0, standard library, `github.com/infrata/infrata` (via `replace => ../ilan`).
 
 **Spec:** this document. The design was approved in session on 2026-09-13; its decisions and the
 verification behind them are recorded below rather than in a separate spec, because `CLAUDE.md`
@@ -19,7 +19,9 @@ requires the plan to carry both.
 
 ## Global Constraints
 
-- Go `1.24.13`. Standard library plus `github.com/infrata/infrata` only — no other `require`.
+- Go `1.27.0`, following infrata's own `go.mod` floor as of 2026-09-13 (R7; supersedes the
+  `1.24.13` this section originally named). Standard library plus `github.com/infrata/infrata` only
+  — no other `require`.
 - `go.mod` carries `replace github.com/infrata/infrata => ../ilan` (infrata is not fetchable).
 - Plugin name `fake`; binary `infrata-plugin-fake`; every type prefixed `fake.`.
 - Nothing ever writes to stdout. Logs, if any, go to stderr.
@@ -47,6 +49,28 @@ requires the plan to carry both.
 | D6 | Protocol tests use `pkg/plugintest` in `go test ./...`; the real-binary suite is `-tags e2e` | `plugintest` runs infrata's own host over an in-memory pipe, so trust rules apply with no process. The e2e suite is slower and needs `../ilan` built; the user wants it run occasionally for compliance, not on every run. | e2e skips (loudly) when the infrata source is absent. |
 | D7 | Committed `replace => ../ilan` | `go list -m github.com/infrata/infrata` fails (private). Spike: builds offline, zero `go.sum` lines, pulls only `pkg/*`. | Needs a sibling checkout named `ilan`; documented in README. |
 | D8 | Bottom-up task order: cloud → provider → discover/import → injection → plugin+binary → e2e → docs | Each layer is testable on its own the moment it exists. `CLAUDE.md`'s suggested order starts with the binary, but `main` needs a `Plugin` whose `New` returns a working `Provider`, so schemas-first would ship a stub. `infrata explain` is verified in Task 5 instead. | The binary appears at Task 5, not Task 1. |
+| D10 | Ship `plugin.yaml` (infrata `PLAN.md` §31.2) plus a release gate that refuses a tag/manifest/binary disagreement | User direction, 2026-09-13: infrata's install flow reads a manifest at the release tag before downloading a binary, and a plugin author needs one worked example. `internal/fake.Version` defaults to `"0.0.0-dev"`, stamped only by `-ldflags` at release, so an unstamped build cannot silently pass. | A `pkg/semver`-shaped `infrata:` constraint and `platforms` list to keep true; validating `plugin.yaml` itself (Task 12) waits on infrata publishing `pkg/pluginmanifest`. |
+
+### Rulings recorded during execution (R8–R19)
+
+The SDD ledger (`.superpowers/sdd/2026-09-13-port-fake-provider/progress.md`) is authoritative; these
+are its rulings, carried here so the plan is self-contained. R1–R7 are recorded inline at the tasks
+they correct (Global Constraints, Task 1 Step 6, Task 4 Steps 1 and 5).
+
+| # | Ruling | Why | Cost |
+| --- | --- | --- | --- |
+| R8 | Commit Task 6's two e2e fixtures before Task 7, separately from the (still in-progress) e2e suite | README.md quotes the `basic` fixture and `readme_test.go` reads it from disk; a README commit that depends on an untracked file fails in a clean checkout. | If Task 6 later changes a fixture, the README quote changes with it. |
+| R9 | `internal/fake.Version` defaults to `"0.0.0-dev"`, stamped only by release `-ldflags`, mirroring infrata's own §61.1 convention | A default equal to `plugin.yaml`'s version (`0.1.0`) would let an unstamped binary pass the tag/manifest/binary release gate, so a broken `-ldflags` path could never be caught. Verified the handshake is readable with just the host cookie and empty stdin. | An unstamped build cannot satisfy a project's `plugins: {fake: …}` version constraint (the host names it; intended). |
+| R10 | Archive the linux/arm build as `infrata-plugin-fake_<v>_linux_arm.tar.gz`, following §31.2's constructible `<goos>_<goarch>` convention rather than infrata's own `armv7` archive spelling | Consistency with this repo's manifest-driven naming. | One archive name to change if infrata's install ever adds a GOARM suffix. |
+| R11 | Run Task 11 (manifest + release gate) before Tasks 8 and 9; extend Task 8/9's plan text with the manifest, release gate, `0.0.0-dev` default, `plugins:`/`pkg/semver` and Go-floor facts before briefing them | Docs committed before the files they describe exist would describe a repository that does not contain them. | None; Task 11 depends on nothing in 8 or 9. |
+| R12 | Resume Task 6's implementer (blocked on an infrata discovery defect) as soon as the upstream fix landed, ahead of finishing Task 11 | User-approved return to Task 6 once unblocked; only one implementer commits at a time, and Task 7's implementer was already done (only its reviewer still live). | A Task 6 sabotage briefly edits `internal/fake` while Task 7's reviewer reads `internal/fake/definitions.go`; no Task 6 sabotage touches that file, so no conflict. |
+| R13 | Keep README.md's two sentences pointing at `infrata discover`/`infrata import` for hand-added resources, despite an earlier scope ruling capping that mention at one sentence | The cap existed only because discovery was broken; infrata `de33b4d` fixed it (verified), and Task 7b later adds the full worked example. | One sentence naming two commands ahead of their examples landing in Task 7b. |
+| R14 | Accept that Task 6's sabotage 4 (drop `Import`'s type check) does not fail the e2e import subtest | infrata's host forces the requested type and refuses attributes that type does not declare, so the import fails through the real host regardless of the plugin's own check; the fake's check stays covered at the unit level (`TestImportOfTheWrongTypeIsRefused`, sabotage-verified in Task 3). | None; the e2e layer simply cannot observe that particular check. |
+| R15 | Queue Task 11's fix round until Task 8's implementer reported, rather than running both at once | Two implementers committing at once risk the git index lock even with disjoint files. | A few minutes' delay. |
+| R16 | Correct AGENT.md, this plan (Task 8 item 8) and `CLAUDE.md`'s claim that Go's too-low-`go`-directive error "does not name the dependency" | Task 8's reviewer reproduced the real message directly: it names the module (`go: <module>@<version> requires go >= X …`). | None; the reproduction is direct. Task 9 item 11 was checked and never carried this claim — no edit needed there. |
+| R17 | Fold README.md's retryability-paragraph correction into Task 7b rather than a separate task | The paragraph as written said only `update` is retried when conditional, contradicting the guide's per-operation table and AGENT.md; Task 7b was already touching that section next. | The README stayed wrong for the short interval until Task 7b ran. |
+| R18 | Treat Task 9's Important-2 finding (the same README retry contradiction) as already covered by R17/Task 7b, rather than a second fix | One correction, one place to make it; Task 7b was directed to treat the guide, not AGENT.md §5, as authoritative for retries. | None; Task 7b's review checked it. |
+| R19 | Task 10 does not edit the Obsidian vault; the controller performs the vault close-out after Task 10 reports "vault-worthy facts" | The infrata session edits `labs/infra-tool.md` concurrently; a second, uncoordinated editor risks a lost update. | None; Task 10 lists what the vault should record instead of writing it. |
 
 ## Behaviour ledger (`providers/test` → `internal/fake`)
 
@@ -97,6 +121,14 @@ Every factual claim above was checked by reading code or running the CLI on 2026
 | `explain` works with no `infra.yml` | `infrata --chdir <empty dir> explain test.network` | True, exit 0 (builtin; plugin-dir loading by prefix checked in Task 5) |
 | `pkg/plugintest` is importable from another module | Its own test cannot prove it — Go's `internal/` rule is per module (`ilan` `b7f0de6` message) | **Unproven until Task 5** — `protocol_test.go` compiling here is the check |
 | The engine's in-tree `providers/test` has 36 tests | `grep '^func Test'` | True; 32 port (some moved between files), 4 are deleted (D3) |
+| `explain` loads a plugin from its type prefix alone via `--plugin-dir`, no `infra.yml`/`providers:` | `infrata --chdir <empty dir> --plugin-dir ./bin explain fake.database` | True, exit 0 (task-5-report.md Step 6) |
+| `plan --output` lists every planned resource, including no-op ones | infrata `de33b4d` (commit message) | True — `kind: "noop"` appears for an unchanged resource; Task 6's `planOps` filters it out for its own assertions |
+| The discovery registry silently dropped a project with no `providers:` block once a second plugin (`fake`) existed alongside the builtin `test` | `ilan` `internal/cli/context.go:357` (`discoveryRegistry` calls `EnsurePlugins` over every `loader.Available()`, builtins included) and `:372-376` (falls back to `providers.Implicit`, whose own comment claims "one per plugin"); `internal/providers/prepare.go:240` (`Implicit` returns `nil` when more than one factory is registered) | Confirmed defect (root-caused by the controller against `ilan` `fd944ef`); fixed upstream in `de33b4d` ("discover: ask every plugin, not none when there is more than one"), which replaces the `Implicit` call with `providers.EveryPlugin`; `e2e_test.go`'s discover/import subtests pass against it (Task 6, commit `efa5c54`) |
+| infrata's `infrata:` manifest-floor constraint is enforced for release builds and exempts development builds | `ilan` `internal/compiler/compile.go:252-270` (`checkRequiredVersion`) | True: enforced only for a release-stamped version; `"0.0.0-dev"`, `""`, `0.0.0` and an unparseable version are deliberately exempted — a checkout build accepting an `infrata: ">= 99.0"` constraint is by design, not a bug. Consequence: this repo's e2e suite (checkout-built infrata) cannot exercise that constraint; only a release build can |
+| A project's `plugins:` version constraint is enforced against the plugin's handshake version | `ilan` `internal/pluginhost/loader.go:139-160` | True; an unversioned plugin reports `0.0.0` and cannot satisfy any constraint above it — the asymmetry with the `infrata:` exemption above is intentional and documented there |
+| The plugin handshake is readable with just the host cookie and empty stdin | manual run of `internal/fake/plugin.go`'s built binary | True, exit 0 — supports Ruling R9's choice to default `Version` to `"0.0.0-dev"` rather than the manifest's version, so an unstamped `-ldflags` path is still visibly unstamped |
+| `pluginsdk`'s hand-run message (printed when the plugin binary is launched directly, without the host cookie) | manual run | Has a second line beyond the refusal, pointing the runner at where infrata looks for plugins — AGENT.md and the guide should not assume it is one line |
+| Go's error for a `go` directive lower than a dependency's floor names the offending module | Task 8 reviewer's reproduction (`replace` and `GOPROXY` variants) | **Contradicted this plan's own Task 8 item 8 and this repo's `CLAUDE.md` (added by the infrata session in `5ce4f13`)**, both of which said the error "does not name the dependency" — false. The real message: `go: <module>@<version> requires go >= X (running go Y; …)`. With `GOTOOLCHAIN=auto` (this repo's default), Go instead fetches a newer toolchain silently; the named-module error only surfaces under a pinned `GOTOOLCHAIN=local` on a too-old toolchain (R16; fixed in AGENT.md by commit `cbeac6a`, in this plan and `CLAUDE.md` by Task 10) |
 
 ## File structure
 
@@ -230,7 +262,7 @@ Expected: `ok`; `gofmt -l` prints nothing; `go.mod` gains no `require` other tha
 - [ ] **Step 6: Sabotage**
 
 One at a time, run the suite, confirm the named test fails, revert:
-- `ShouldFail`: `if rule.Seen == nth` → `if rule.Seen >= nth` → `TestShouldFailMatchesNthOccurrence` (fires a third time).
+- `ShouldFail`: move `rule.Seen++` below the `if rule.Seen == nth` comparison → `TestShouldFailMatchesNthOccurrence` (an nth:2 rule then fires on the 3rd call, not the 2nd). NOTE (R3): the plan originally named `if rule.Seen == nth` → `if rule.Seen >= nth`, which is an equivalent mutant — `Seen` rises by exactly 1 per call and `Fired` blocks re-evaluation, so `==` and `>=` never disagree; it discriminates nothing.
 - `Save`: `tmp.Chmod(0o600)` → `tmp.Chmod(0o644)` → `TestSaveIsAtomicAndPrivate`.
 - `Save`: `json.MarshalIndent(c, "", "  ")` → `json.Marshal(c)` → `TestSaveIsHumanEditable`.
 - `LoadCloud`: `if !rule.Retryability.valid()` → `if false && !rule.Retryability.valid()` → `TestUnknownRetryabilityIsRejected`.
@@ -863,7 +895,10 @@ import (
 )
 ```
 
-Move into it, unchanged apart from `test.*` → `fake.*`, from `ilan/providers/test/provider_test.go`:
+Move into it, unchanged apart from `test.*` → `fake.*` (R5: `TestNthReadRuleSurvivesAcrossOperations`
+also gains one line setting `st.Address`, since `Create` no longer returns it — D3/the host
+re-attaches `Address`, and the failure rule matches on the address `Read` receives, so the moved
+test must set what the host would have attached), from `ilan/providers/test/provider_test.go`:
 `TestInjectedFailureIsClassified` (132), `TestNthReadRuleSurvivesAcrossOperations` (160),
 `TestNthFailureRuleSurvivesAcrossOperations` (240), `TestFailureRuleReachesAllThreeClassifications` (456),
 `TestOperationsOverlapRatherThanSerialise` (514); and from `cloud_test.go`:
@@ -1058,7 +1093,10 @@ Expected: `ok` (with `-race`: the lock work is the point of this task).
 
 - [ ] **Step 5: Sabotage**
 
-- `begin`: move the `c.Save` call inside `if failing { … }` → both `Nth…SurvivesAcrossOperations` tests.
+- `begin`: move the `c.Save` call inside `if failing { … }` → `TestNthReadRuleSurvivesAcrossOperations`
+  only (R6: `Create` persists its own advanced counter — the ported test's own comment says so — so
+  the create variant, `TestNthFailureRuleSurvivesAcrossOperations`, is not discriminated by this
+  sabotage; the read test carries the coverage. The plan originally claimed both tests failed).
 - `ClassifyError`: `return injected.Retryability.Classify()` → `return provider.NotSafeToRetry` → `TestFailureRuleReachesAllThreeClassifications/safe` and `/conditional`, `TestInjectedFailureIsClassified`.
 - `Read`: move the delay block below `defer p.mu.Unlock()` → `TestOperationsOverlapRatherThanSerialise`.
 - `delay`: `case <-ctx.Done(): return ctx.Err()` → `case <-ctx.Done(): <-time.After(d); return nil` → `TestCancellationDuringLatencyMutatesNothing`.
@@ -2001,8 +2039,12 @@ the grep in Step 2 plus re-reading each changed section against the code it desc
 7. **§2 table, `Update`.** Add to Notes: "make the resource match `desired` — including removing what
    `desired` no longer has; `desired` never contains computed attributes, so keep those."
 8. **§1 "Depending on infrata" (from item 2).** Also: the module's `go` directive must be at least
-   infrata's own (1.27 as of 2026-09-13), and Go's error for a too-low directive does not name the
-   dependency that caused it.
+   infrata's own (1.27 as of 2026-09-13). (R16: the plan originally added here that Go's error for a
+   too-low directive "does not name the dependency that caused it" — that is false and was struck.
+   Task 8's reviewer reproduced the error directly: `go: <module>@<version> requires go >= X
+   (running go Y; …)` names the module. With `GOTOOLCHAIN=auto`, Go instead fetches a newer
+   toolchain silently; only a pinned `GOTOOLCHAIN=local` (or offline) surfaces the named-module
+   error.)
 9. **§9 Releasing — the manifest.** Every plugin repository ships `plugin.yaml` at its root, per infrata
    `PLAN.md` §31.2: `manifest: 1` (checked first), `name`, `version`, `protocol` (a list), `platforms`
    (`GOOS/GOARCH` per published build), `description`; optional `infrata` (a `pkg/semver` constraint;
@@ -2169,12 +2211,15 @@ lines beginning `Ruling:` and `Plan verification-log facts`) to this document:
   enforced for release builds and exempts development builds; `plugins:` is enforced against the
   handshake version; the discovery defect and its fix in infrata `de33b4d`; the handshake is readable
   with the cookie and empty stdin; the SDK's hand-run message has a second line.
-- Decisions table: add R8–R16 in one line each, and D10 for the manifest and release gate (user
-  direction, infrata `PLAN.md` §31.2).
+- Decisions table: add R8–R19 in one line each (R17: README retry paragraph corrected in Task 7b;
+  R18: Task 9's README finding folded into 7b; R19: vault close-out left to the controller), and
+  D10 for the manifest and release gate (user direction, infrata `PLAN.md` §31.2).
 - Task 8 item 8 and Task 9 item 11: delete the claim that Go's error for a too-low `go` directive
   "does not name the dependency". It is false: the error reads
   `go: <module>@<version> requires go >= X (running go Y; …)` (R16, reproduced by Task 8's reviewer).
-  Add the correction to the verification log.
+  Add the correction to the verification log. (Checked at Task 10: Task 9 item 11's plan text never
+  carried this claim — it already read cleanly, "must be at least infrata's own (1.27 as of
+  2026-09-13)" with no assertion about the error's wording — so only Task 8 item 8 needed the edit.)
 
 - [ ] **Step 2: Update CLAUDE.md**
 
