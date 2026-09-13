@@ -19,9 +19,10 @@ import (
 func main() { pluginsdk.Main(hetzner.New()) }
 ```
 
-Contract, in the infrata repository: `PLAN.md` §31.1 (the design and its reasoning),
-`pkg/pluginproto` (the wire), `pkg/pluginsdk` (`Main`), `pkg/provider` (the interfaces), `pkg/schema`
-(describing types), `pkg/value` (the value model).
+Contract, in the infrata repository: `PLAN.md` §31.1 (the design and its reasoning) and §31.2 (the
+plugin manifest), `pkg/pluginproto` (the wire), `pkg/pluginsdk` (`Main`), `pkg/provider` (the
+interfaces), `pkg/schema` (describing types), `pkg/value` (the value model), `pkg/plugintest` (the
+test harness in §8), `pkg/semver` (the constraint syntax in §9).
 
 ---
 
@@ -62,6 +63,23 @@ prints a line saying what the binary is and exits non-zero. That check exists be
 program started on a terminal otherwise sits silently waiting for input on stdin, which is
 indistinguishable from a hang.
 
+### Depending on infrata
+
+Until `github.com/infrata/infrata` is published, a plugin needs a `replace` directive in its
+`go.mod` pointing at a checkout:
+
+```
+replace github.com/infrata/infrata => <path to a checkout>
+```
+
+Nothing else is needed: the SDK and everything it depends on is the standard library only, so
+there is no other third-party dependency to pull in.
+
+Your module's own `go` directive must be at least infrata's own — 1.27 as of 2026-09-13. Set it
+too low and the build fails with Go's ordinary "module requires go >= X" error, which does not name
+the dependency that raised the requirement; if that happens, check infrata's `go.mod` before
+assuming the problem is elsewhere.
+
 ---
 
 ## 2. The two interfaces
@@ -72,9 +90,16 @@ indistinguishable from a hang.
 type Plugin interface {
 	Name() string
 	Definitions() []*schema.ResourceDefinition
-	New(instance string, config map[string]value.Value) (Provider, error)
+	New(cfg provider.Config) (Provider, error)
 }
 ```
+
+`Config` is a struct, not a bag of parameters: `Instance` (the name the user gave this instance),
+`Values` (the instance's own resolved configuration — nothing reserved lives in here; every key came
+from the user), and `ProjectDir` (the project directory, for resolving a relative path from
+configuration). `cfg.Value(key)` looks one up. It is a struct on purpose: a plugin built against an
+older SDK must keep compiling as this grows, and a new field on a struct is additive while a new
+parameter on a function is not — plugins are compiled by other people, on their own schedule.
 
 - **`Definitions` must answer with no configuration at all.** Schemas are static: `hetzner.server`
   is described the same way whichever account it would be created in. This is what lets infrata
@@ -82,8 +107,8 @@ type Plugin interface {
   split in two.
 - **`New` is called once per configured instance**, with that instance's own resolved configuration.
   One process serves many instances: two accounts of one cloud means one plugin process holding two
-  configured clients. `instance` is the name the user gave it, and a plugin whose configuration is
-  entirely optional still needs it to keep two instances apart.
+  configured clients. `cfg.Instance` is the name the user gave it, and a plugin whose configuration
+  is entirely optional still needs it to keep two instances apart.
 - **An error from `New` is a user's problem to fix** — a missing credential, an unreadable path, a
   key you do not accept — so say what is wrong and what to do. It is rendered as a configuration
   error against the `providers:` entry that caused it.
@@ -119,7 +144,7 @@ type Provider interface {
 | --- | --- | --- |
 | `Read` | current state, or `(nil, nil)` if it no longer exists | `(nil, nil)` is how a deleted resource is reported; it is not an error |
 | `Create` | the created resource, **never `(nil, nil)`** | see below |
-| `Update` | the updated resource, **never `(nil, nil)`** | same |
+| `Update` | the updated resource, **never `(nil, nil)`** | make the resource match `desired` — including removing what `desired` no longer has; `desired` never contains computed attributes, so keep those |
 | `Delete` | error only | deleting something already gone should succeed |
 | `Discover` | everything that exists of the requested types | including resources infrata does not manage |
 | `Import` | one resource by the cloud's own ID | `(nil, nil)` becomes "no such resource" |
@@ -262,10 +287,14 @@ has write scope"` is.
 
 ## 7. The project directory
 
-`New` receives the project directory when it needs to resolve a relative path from configuration —
-a file the user named relative to their project rather than to whatever working directory the
-plugin inherited. Most real plugins do not need it. If yours does, resolve against it rather than
-against the process's `cwd`, which is not the project.
+`cfg.ProjectDir` is there when you need to resolve a relative path from configuration — a file the
+user named relative to their project rather than to whatever working directory the plugin inherited.
+Most real plugins do not need it. If yours does, resolve against it rather than against the
+process's `cwd`, which is not the project.
+
+**Use an absolute path from configuration as written.** Joining it onto the project directory
+anyway silently rebases it — `cloud: /tmp/x.json` becomes `<project>/tmp/x.json`, a bug the fake
+provider had. Check `filepath.IsAbs` first and only join when it's false.
 
 ---
 
@@ -275,13 +304,30 @@ You do not need a cloud account, and you do not need a subprocess.
 
 - **Test your `Provider` directly.** It is an ordinary Go interface; call its methods in a table
   test. This is where most of your coverage belongs.
-- **Test the protocol path in process.** Infrata's `pluginhost.InProcess` runs the SDK on one end of
-  an in-memory pipe and the host on the other, so every call is encoded, decoded and passed through
-  the host's trust rules with no process involved. Use it to prove your plugin works through the
-  real protocol — including that your schemas load, which catches the prefix and reserved-name
-  rules.
-- **Test the binary once.** One end-to-end test that builds the binary and runs infrata against it
-  is enough to prove the packaging; everything else is faster and clearer at the two levels above.
+- **Test the protocol path with `pkg/plugintest`.** It runs the SDK on one end of an in-memory pipe
+  and infrata's own host on the other, so every call is encoded, decoded and passed through the
+  host's real trust rules with no subprocess involved:
+
+  ```go
+  host, err := plugintest.Open(ctx, myplugin.New(), t.TempDir())
+  if err != nil { t.Fatal(err) }            // schemas refused on load
+  defer host.Close()
+  prov, err := host.Configure(provider.Config{Instance: "main"})
+  ```
+
+  `Open` fails if your schemas do not pass the checks infrata applies on load — the type prefix
+  rule, a reserved attribute name, a default of the wrong kind — which makes it worth a test of its
+  own. `Configure` returns the host's own adapter, so schema validation, forced sensitivity,
+  provenance, undeclared-attribute refusal and error classification all apply to what it returns,
+  exactly as they would through a subprocess.
+
+  **Do not assert in a unit test that your `Provider` marks sensitivity or carries bookkeeping
+  forward — it should not; assert that the host does it, through `plugintest`.** See
+  infrata-provider-fake's `internal/fake/protocol_test.go` for a worked example.
+- **Test the binary once.** One end-to-end test that builds the binary and runs a real `infrata`
+  against it is enough to prove the packaging; everything else is faster and clearer at the two
+  levels above. Keep it behind a build tag if it builds infrata itself, so the rest of the suite
+  does not need infrata's source to run. See infrata-provider-fake's `e2e/` for a worked example.
 - **Fake the cloud, not your own code.** Point your plugin at a test double of your cloud's API — a
   `httptest.Server`, or an interface you implement twice — rather than mocking your own methods. A
   test that mocks the thing under test asserts nothing.
@@ -298,18 +344,75 @@ that does not exist.
 - Build for every platform your users have. A plugin is a plain Go binary, so this is
   `GOOS`/`GOARCH` and nothing more.
 - Name the artefact `infrata-plugin-<name>` and ship it as-is; users put it on the search path.
-- Report a real version from `Version()`, so a project can pin it:
-
-  ```yaml
-  plugins:
-    hetzner: ">= 1.2.0, < 2.0.0"
-  ```
-
-  The constraint is checked against what your handshake reports. Comparison operators on
-  `MAJOR.MINOR.PATCH`, comma meaning AND.
+- Report a real version from `Version()`, so a project can pin it (see "Constraints" below).
 - **The protocol version is the compatibility contract, not the Go types you compiled against.** A
   plugin built against an older SDK keeps working for as long as its protocol version is supported.
   You do not have to rebuild for every infrata release.
+
+### The manifest
+
+Every plugin repository ships a `plugin.yaml` at its root (infrata `PLAN.md` §31.2):
+
+```yaml
+manifest: 1
+name: hetzner
+version: 1.2.0
+protocol: [1]
+platforms: [linux/amd64, linux/arm64, darwin/arm64, windows/amd64]
+description: A provider for Hetzner Cloud.
+infrata: ">= 0.2.0"
+source: https://github.com/example/infrata-plugin-hetzner
+```
+
+`manifest` (checked first, before any other key), `name`, `version`, `protocol` (a list — the host
+accepts a set of supported versions), `platforms` (one `GOOS/GOARCH` per build you publish) and
+`description` are required. `infrata` is optional — a `pkg/semver` constraint on the infrata
+releases this plugin is known to work with; absent means unconstrained, never write `">= 0.0.0"` to
+say that. `source` is optional, for a search result to link.
+
+It is read at the release **tag**, never the default branch: the file on `main` describes unreleased
+code, and reading it to judge `v1.2.0` would answer the wrong question once `main` has moved on to
+describing `v1.3.0`.
+
+Deliberately absent, and don't add them back: checksums (`SHA256SUMS` is a release asset, built
+after the binaries exist, so a checked-in manifest cannot carry one honestly), asset names or
+download URLs (a convention instead — `infrata-plugin-<name>_<version>_<goos>_<goarch>.tar.gz`,
+`.zip` on Windows — one convention beats a field every author can get wrong), and resource types
+(`name` already implies them: a plugin serves `<name>.*` and the host refuses anything else).
+
+See infrata-provider-fake's `plugin.yaml` for a worked example.
+
+### The release gate
+
+A release must **fail** unless three things agree: the git tag, `plugin.yaml`'s `version`, and the
+version the built binary actually reports in its handshake. A drift test that merely compares the
+manifest to the code is a weaker substitute — it is a test someone can delete, where the release
+assertion blocks the release outright.
+
+Make `Version()` default to something like `0.0.0-dev`, never a value equal to the manifest's
+version, and stamp the real version only at release time with `-ldflags -X`. If the default already
+matched the manifest, a broken `-ldflags` path would pass the gate silently — the binary would
+report the right version by coincidence, not because the release stamped it.
+
+See infrata-provider-fake's `scripts/release-check`, `scripts/build-release` and
+`.github/workflows/release.yml` for a worked example of a gate built this way.
+
+### Constraints
+
+A project pins your plugin with:
+
+```yaml
+plugins:
+  hetzner: ">= 1.2.0, < 2.0.0"
+```
+
+The constraint is checked against the version your **handshake** reports, not anything else. A
+plugin that does not implement `Version()` — or that reports it before a release stamps it — reports
+`0.0.0` and cannot satisfy any constraint above it.
+
+The syntax is `pkg/semver`'s: comparison operators `>= <= != == > < =` on `MAJOR.MINOR.PATCH`, comma
+meaning AND, a bare version pinning exactly, `0.4` meaning `0.4.0`, and any pre-release suffix
+ignored for comparison purposes.
 
 ---
 
@@ -330,4 +433,12 @@ that does not exist.
 - [ ] Every test has been sabotage-verified
 - [ ] `plan` → `apply` → `plan` against a real project shows no changes on the second plan
 - [ ] Removing a resource from configuration proposes destroying it, and applying that destroys it
-- [ ] Mutating the cloud outside infrata and running `refresh` reports the drift
+- [ ] Mutating the cloud outside infrata makes the next `plan` propose the change (`refresh` records
+      it into state; it does not print a diff)
+- [ ] Removing an optional attribute from configuration converges: apply, then `plan` shows no
+      changes
+- [ ] An absolute path in configuration is used as written
+- [ ] `plugin.yaml` is present, and its `name`/`version`/`protocol` agree with the code
+- [ ] The release gate refuses a tag, manifest and binary that disagree
+- [ ] `Version()` reports something like `0.0.0-dev` in an unstamped build, never the manifest's
+      version
