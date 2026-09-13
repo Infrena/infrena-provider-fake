@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -157,14 +158,60 @@ func (p *Provider) Delete(ctx context.Context, current *resource.ResourceState) 
 	return c.Save(p.cloudPath)
 }
 
-// Discover is implemented in Task 3.
+// Discover reports every resource the cloud file holds, INCLUDING ones this project never
+// created — a CloudResource written by hand has no `address`, and discovery does not care.
+// Infrastructure that predates the tool is the only reason discovery exists.
+//
+// req.Types filters HERE rather than in the caller: a real provider answers one type with
+// one API call, and the fake must not model a cheaper contract than a real one.
+//
+// Sorted by provider ID, because the listing is printed and diffed and Go's map order is not.
 func (p *Provider) Discover(ctx context.Context, req provider.DiscoverRequest) ([]provider.DiscoveredResource, error) {
-	return nil, provider.ErrNotImplemented
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	c, err := p.begin("discover", "")
+	if err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]bool, len(req.Types))
+	for _, t := range req.Types {
+		wanted[t] = true
+	}
+	out := make([]provider.DiscoveredResource, 0, len(c.Resources))
+	for id, obj := range c.Resources {
+		if len(wanted) > 0 && !wanted[obj.Type] {
+			continue
+		}
+		st := stateOf(obj.Type, id, obj.Attributes)
+		out = append(out, provider.DiscoveredResource{Type: obj.Type, ProviderID: id, Attributes: st.Attributes})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProviderID < out[j].ProviderID })
+	return out, nil
 }
 
-// Import is implemented in Task 3.
+// Import adopts one existing resource by its provider ID.
+//
+// The type is CHECKED against what the cloud holds, not trusted: `import fake.network db-9`
+// naming a real database would otherwise write state claiming a database is a network, and
+// the next plan would propose replacing real infrastructure to settle a disagreement the tool
+// invented. No address is assigned — naming is infrata's job.
 func (p *Provider) Import(ctx context.Context, resourceType, id string) (*resource.ResourceState, error) {
-	return nil, provider.ErrNotImplemented
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	c, err := p.begin("import", id)
+	if err != nil {
+		return nil, err
+	}
+	obj, ok := c.Resources[id]
+	if !ok {
+		return nil, fmt.Errorf("fake provider: no resource with ID %q exists in %s", id, p.cloudPath)
+	}
+	if obj.Type != resourceType {
+		return nil, fmt.Errorf("fake provider: %q is a %s, not a %s", id, obj.Type, resourceType)
+	}
+	return stateOf(obj.Type, id, obj.Attributes), nil
 }
 
 func computedFor(resourceType, id string) map[string]any {
