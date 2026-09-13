@@ -249,16 +249,18 @@ func (p *provider) ClassifyError(err error) Retryability
 Return one of `provider.NotSafeToRetry`, `provider.ConditionallyRetryable`, `provider.SafeToRetry`.
 Infrata owns the backoff; you only classify.
 
-- **`SafeToRetry`** — a throttle, a 5xx, a timeout on a read. Retrying cannot do harm. Infrata
-  retries a create, update or delete that fails this way.
-- **`ConditionallyRetryable`** — it might have taken effect. Infrata retries an update that fails
-  this way, and does **not** retry a create or a delete.
-- **`NotSafeToRetry`** — a validation failure, a permissions problem, or anything where a second
-  attempt could create a second resource. Never retried. **This is the right default when you are
-  unsure.**
+- **`SafeToRetry`** — the operation provably did not take effect: a throttle, or a 5xx your API
+  guarantees was rejected before doing anything. Infrata retries a create, update or delete that
+  fails this way.
+- **`ConditionallyRetryable`** — it may have taken effect: a timeout, or a connection dropped after
+  the request was sent. Infrata retries only an update that fails this way; a create or a delete is
+  **not** retried, because a second attempt could make a duplicate or act on something else.
+- **`NotSafeToRetry`** — a validation failure, a permissions problem, anything that will fail the
+  same way again, or anything you are unsure about. Never retried. **This is the right default when
+  you are unsure.**
 
 Reads, discovery and import are not retried by infrata under any classification; a plugin may retry
-a transient read failure itself.
+a transient read failure itself. `docs/writing-a-provider.md` §5 has the per-operation table.
 
 `ClassifyError` takes an `error`, and an `error` cannot cross a pipe — so the SDK calls your
 `ClassifyError` on your side and sends the answer along with the message. You do not need to do
