@@ -2,11 +2,13 @@ package fake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/infrata/infrata/pkg/provider"
 	"github.com/infrata/infrata/pkg/resource"
@@ -16,6 +18,15 @@ import (
 // PluginName is this plugin's name: the binary's suffix, what `plugin:` names, and the
 // prefix of every type it serves. The host refuses a mismatch in any of the three.
 const PluginName = "fake"
+
+// ErrInjected is a failure a rule in the cloud file asked for. ClassifyError recognises
+// it and answers with the rule's declared retryability.
+type ErrInjected struct {
+	Message      string
+	Retryability Retryability
+}
+
+func (e *ErrInjected) Error() string { return e.Message }
 
 // Provider is one configured instance of the fake provider, backed by one cloud file.
 type Provider struct {
@@ -56,17 +67,68 @@ func (p *Provider) Name() string { return PluginName }
 // Definitions returns the resource types this provider serves.
 func (p *Provider) Definitions() []*schema.ResourceDefinition { return definitions() }
 
-// ClassifyError says whether a failed operation may be retried. Nothing this provider
-// returns yet is known to be safe, so everything is NotSafeToRetry.
-func (p *Provider) ClassifyError(err error) provider.Retryability { return provider.NotSafeToRetry }
+// ClassifyError answers an injected failure with the retryability its rule declared, and
+// anything else with NotSafeToRetry — the right default when a second attempt could create
+// a second resource.
+func (p *Provider) ClassifyError(err error) provider.Retryability {
+	var injected *ErrInjected
+	if errors.As(err, &injected) {
+		return injected.Retryability.Classify()
+	}
+	return provider.NotSafeToRetry
+}
 
-// begin loads the cloud for one operation. Callers hold p.mu.
+// begin loads the cloud and applies failure injection. Callers hold p.mu.
+//
+// The cloud is saved whether or not a rule fires: ShouldFail advances a matching rule's
+// persisted counter, and saving only on failure would reset it on the next load, so an
+// nth greater than 1 could never be reached.
 func (p *Provider) begin(op, addr string) (*Cloud, error) {
-	return LoadCloud(p.cloudPath)
+	c, err := LoadCloud(p.cloudPath)
+	if err != nil {
+		return nil, err
+	}
+	rule, failing := c.ShouldFail(op, addr)
+	if err := c.Save(p.cloudPath); err != nil {
+		return nil, err
+	}
+	if failing {
+		msg := rule.Message
+		if msg == "" {
+			msg = fmt.Sprintf("injected %s failure for %s", op, addr)
+		}
+		return nil, &ErrInjected{Message: msg, Retryability: rule.Retryability}
+	}
+	return c, nil
+}
+
+// delay applies the cloud file's simulated latency, returning early if ctx is cancelled.
+//
+// OUTSIDE the lock, deliberately: the lock protects the file, and holding it across a sleep
+// would serialise every operation and quietly disarm every concurrency test run against
+// this provider. And BEFORE the mutation, so cancellation abandons only work not yet done.
+func (p *Provider) delay(ctx context.Context) error {
+	c, err := LoadCloud(p.cloudPath)
+	if err != nil {
+		return err
+	}
+	d := c.Delay()
+	if d <= 0 {
+		return nil
+	}
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Create creates a resource in the fake cloud and assigns it a provider ID.
 func (p *Provider) Create(ctx context.Context, d *resource.DesiredResource) (*resource.ResourceState, error) {
+	if err := p.delay(ctx); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -93,6 +155,9 @@ func (p *Provider) Create(ctx context.Context, d *resource.DesiredResource) (*re
 // Read reports a resource as the fake cloud holds it now, or (nil, nil) if it is gone —
 // which is how a hand-deleted resource shows up as drift.
 func (p *Provider) Read(ctx context.Context, current *resource.ResourceState) (*resource.ResourceState, error) {
+	if err := p.delay(ctx); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -113,6 +178,9 @@ func (p *Provider) Read(ctx context.Context, current *resource.ResourceState) (*
 // state never carries. Merging instead leaves a dropped attribute in the cloud, and every
 // later plan proposes removing it again.
 func (p *Provider) Update(ctx context.Context, current *resource.ResourceState, d *resource.DesiredResource) (*resource.ResourceState, error) {
+	if err := p.delay(ctx); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -147,6 +215,9 @@ func (p *Provider) Update(ctx context.Context, current *resource.ResourceState, 
 
 // Delete removes a resource. Deleting one that is already gone succeeds.
 func (p *Provider) Delete(ctx context.Context, current *resource.ResourceState) error {
+	if err := p.delay(ctx); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -167,6 +238,9 @@ func (p *Provider) Delete(ctx context.Context, current *resource.ResourceState) 
 //
 // Sorted by provider ID, because the listing is printed and diffed and Go's map order is not.
 func (p *Provider) Discover(ctx context.Context, req provider.DiscoverRequest) ([]provider.DiscoveredResource, error) {
+	if err := p.delay(ctx); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -197,6 +271,9 @@ func (p *Provider) Discover(ctx context.Context, req provider.DiscoverRequest) (
 // the next plan would propose replacing real infrastructure to settle a disagreement the tool
 // invented. No address is assigned — naming is infrata's job.
 func (p *Provider) Import(ctx context.Context, resourceType, id string) (*resource.ResourceState, error) {
+	if err := p.delay(ctx); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
