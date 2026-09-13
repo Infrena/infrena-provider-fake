@@ -219,8 +219,10 @@ enforces them for every plugin.
 **Knowing this list saves you work.** Do not reimplement any of it: a plugin that also does these
 things has tests that pass when the host is broken.
 
-1. **Bookkeeping is never sent to you, so you cannot drop it.** You receive only the type, the
-   provider ID and the attributes. Addresses, dependencies, lifecycle flags and timestamps are
+1. **Bookkeeping is never sent to you, so you cannot drop it.** You receive the type, the provider
+   ID, the attributes, and the resource's address — the address as an *input*, for tagging, naming
+   or an error message. Dependencies, lifecycle flags and timestamps are never sent. On anything you
+   return, everything but the provider ID and attributes — the address included — is ignored and
    re-attached by the host from what it already holds. You do not need to carry anything forward
    from `current` — and `current` is given to `Read` and `Update` so you can *use* it, not so you
    can copy it back.
@@ -247,10 +249,16 @@ func (p *provider) ClassifyError(err error) Retryability
 Return one of `provider.NotSafeToRetry`, `provider.ConditionallyRetryable`, `provider.SafeToRetry`.
 Infrata owns the backoff; you only classify.
 
-- **`SafeToRetry`** — a throttle, a 5xx, a timeout on a read. Retrying cannot do harm.
-- **`ConditionallyRetryable`** — it might have taken effect. Infrata is cautious with these.
+- **`SafeToRetry`** — a throttle, a 5xx, a timeout on a read. Retrying cannot do harm. Infrata
+  retries a create, update or delete that fails this way.
+- **`ConditionallyRetryable`** — it might have taken effect. Infrata retries an update that fails
+  this way, and does **not** retry a create or a delete.
 - **`NotSafeToRetry`** — a validation failure, a permissions problem, or anything where a second
-  attempt could create a second resource. **This is the right default when you are unsure.**
+  attempt could create a second resource. Never retried. **This is the right default when you are
+  unsure.**
+
+Reads, discovery and import are not retried by infrata under any classification; a plugin may retry
+a transient read failure itself.
 
 `ClassifyError` takes an `error`, and an `error` cannot cross a pipe — so the SDK calls your
 `ClassifyError` on your side and sends the answer along with the message. You do not need to do
@@ -407,8 +415,9 @@ plugins:
 ```
 
 The constraint is checked against the version your **handshake** reports, not anything else. A
-plugin that does not implement `Version()` — or that reports it before a release stamps it — reports
-`0.0.0` and cannot satisfy any constraint above it.
+plugin that does not implement `Version()` reports `0.0.0`; an unstamped build reports its default,
+such as `0.0.0-dev`, which compares as `0.0.0` because pre-release suffixes are ignored. Either
+cannot satisfy any constraint above `0.0.0`.
 
 The syntax is `pkg/semver`'s: comparison operators `>= <= != == > < =` on `MAJOR.MINOR.PATCH`, comma
 meaning AND, a bare version pinning exactly, `0.4` meaning `0.4.0`, and any pre-release suffix
