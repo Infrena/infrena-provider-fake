@@ -155,9 +155,9 @@ func TestNullAttributeIsTreatedAsUnset(t *testing.T) {
 //
 // Writing v.Raw directly serialises []value.Value or map[string]value.Value
 // through Value.MarshalJSON, so the file gets the engine's internal wire
-// objects. That defeats spec §8.4's premise that a human can hand-edit fake
+// objects. That defeats the whole premise that a human can hand-edit fake
 // infrastructure, and reading it back yields a Map whose every leaf is itself a
-// four-key kind/known/raw/source Map — which presents in M3 as inexplicable
+// four-key kind/known/raw/source Map — which shows up in a plan as inexplicable
 // permanent drift rather than an obvious serialisation bug.
 func TestCompositeAttributesRoundTripAsPlainJSON(t *testing.T) {
 	p, path := newTestProvider(t)

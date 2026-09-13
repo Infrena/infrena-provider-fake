@@ -50,7 +50,7 @@ func TestReleaseCheckPassesWhenTagManifestAndBinaryAgree(t *testing.T) {
 }
 
 // TestReleaseCheckRefusesATagTheManifestDoesNotName. Judging a release by a manifest that
-// describes a different version is the mistake §31.2 exists to prevent.
+// describes a different version is the mistake infrata PLAN.md §31.2 exists to prevent.
 func TestReleaseCheckRefusesATagTheManifestDoesNotName(t *testing.T) {
 	v := manifestVersion(t)
 	out, err := run(t, nil, "release-check", "v99.0.0")
@@ -104,7 +104,7 @@ func TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion(t *testing.T) {
 }
 
 // TestBuildReleaseNamesArchivesByTheInstallConvention. `infrata plugins install` constructs
-// the download name rather than reading it (§31.2), so a wrong name is an uninstallable release.
+// the download name rather than reading it (infrata PLAN.md §31.2), so a wrong name is an uninstallable release.
 func TestBuildReleaseNamesArchivesByTheInstallConvention(t *testing.T) {
 	v := manifestVersion(t)
 	dist := t.TempDir()

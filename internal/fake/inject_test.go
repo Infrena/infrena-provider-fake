@@ -46,13 +46,12 @@ func TestNthReadRuleSurvivesAcrossOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	// Create's result never carries Address — R2 in provider.go: address is host
-	// bookkeeping, and TestResultsCarryOnlyWhatThePluginOwns asserts the plugin
-	// leaves it unset. In production the host attaches it before Read ever sees the
-	// state (it comes from the persisted state file, e.g. internal/refresh.go's
-	// prov.Read(ctx, rs.Clone())). A direct test chain of Create's output into Read
-	// must attach it itself to stand in for that host step, or the "read"/"net" rule
-	// below can never match.
+	// Create's result never carries Address: the address is the host's bookkeeping, and
+	// TestResultsCarryOnlyWhatThePluginOwns asserts the plugin leaves it unset. In
+	// production the host attaches it from the state it persisted before Read is ever
+	// called. A test that chains Create's output straight into Read must attach it
+	// itself, standing in for that host step, or the "read"/"net" rule below can never
+	// match.
 	st.Address = address.Address{Name: "net"}
 
 	c, err := LoadCloud(path)
@@ -72,8 +71,8 @@ func TestNthReadRuleSurvivesAcrossOperations(t *testing.T) {
 	}
 }
 
-// TestNthFailureRuleSurvivesAcrossOperations is the regression guard for the
-// controller's ruling on Task 9: FailureRule's Seen/Fired bookkeeping must be
+// TestNthFailureRuleSurvivesAcrossOperations is the regression guard for a
+// rule that is easy to break: FailureRule's Seen/Fired bookkeeping must be
 // exported and persisted, and begin() must save the cloud after every
 // ShouldFail call, not only on failure. The provider reloads the cloud file on
 // every operation — it must, to observe hand-edited drift — so if Seen is not
@@ -108,14 +107,13 @@ func TestNthFailureRuleSurvivesAcrossOperations(t *testing.T) {
 }
 
 // TestFailureRuleReachesAllThreeClassifications drives ClassifyError from the
-// cloud file, the way a person or an M3 test would.
+// cloud file, the way a person or infrata's own executor tests would.
 //
-// The rule carried a `Retryable bool`, which maps onto exactly two of the three
-// provider.Retryability constants. Spec §15 gives the three materially
-// different executor behaviour and spec §18 names "retry classification honored
-// for each of the three categories" as a required test, so with a boolean a
-// third of M3's retry logic was untestable — the fake provider is the only
-// thing that will ever produce these errors.
+// The rule once carried a `Retryable bool`, which maps onto exactly two of the
+// three provider.Retryability constants. infrata's executor treats all three
+// differently, so with a boolean a third of its retry behaviour could never be
+// exercised — and the fake provider is the only thing that will ever produce
+// these errors.
 func TestFailureRuleReachesAllThreeClassifications(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -157,8 +155,8 @@ func TestFailureRuleReachesAllThreeClassifications(t *testing.T) {
 
 func TestOperationsOverlapRatherThanSerialise(t *testing.T) {
 	// The mutex exists to protect the cloud file, not to serialise simulated
-	// latency. If it covers the delay, every concurrent test in M2 and M3
-	// passes while proving nothing.
+	// latency. If it covers the delay, every concurrency test run against this
+	// provider passes while proving nothing.
 	p, path := newTestProvider(t)
 	ctx := context.Background()
 
@@ -224,8 +222,8 @@ func TestOperationsOverlapRatherThanSerialise(t *testing.T) {
 // begin() loads the cloud, advances failure bookkeeping and saves on every
 // operation — the read path included — and each CRUD method then saves again.
 // With no guard, concurrent callers interleave and lose each other's writes.
-// Spec §10 has refresh reading every resource in state concurrently, so the
-// first concurrent caller arrives in M3.
+// infrata's refresh reads every resource in state concurrently, so concurrent
+// callers are the normal case, not an edge.
 func TestConcurrentCreatesDoNotLoseUpdates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fake-cloud.json")
 	p := New(path)
@@ -374,9 +372,9 @@ func TestACancelledContextMutatesNothingWithoutLatency(t *testing.T) {
 }
 
 // TestTwoInstancesOnOneFileDoNotLoseUpdates. One plugin process serves every configured
-// instance, so two Providers naming the same cloud file must share a lock (D5).
+// instance, so two Providers naming the same cloud file must share a lock.
 //
-// Passes on first run — lockFor arrived in Task 2. Its evidence is the sabotage in Step 5.
+// Replacing lockFor with a per-Provider mutex is what makes this test fail.
 func TestTwoInstancesOnOneFileDoNotLoseUpdates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fake-cloud.json")
 	a, b := New(path), New(path)

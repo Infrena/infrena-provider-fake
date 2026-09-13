@@ -47,7 +47,7 @@ func TestSaveIsHumanEditable(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	if !bytes.Contains(data, []byte("\n  ")) {
-		t.Error("the cloud file must be indented — a human edits it to induce drift (PLAN.md §48)")
+		t.Error("the cloud file must be indented — a human edits it to induce drift")
 	}
 }
 
@@ -76,8 +76,8 @@ func TestShouldFailIgnoresOtherOpsAndAddresses(t *testing.T) {
 	}
 }
 
-// TestSaveIsAtomicAndPrivate mirrors internal/state's guard on the same
-// discipline: mode 0600, and no temporary file left behind.
+// TestSaveIsAtomicAndPrivate: mode 0600, and no temporary file left behind —
+// the same discipline infrata applies to its own state file.
 func TestSaveIsAtomicAndPrivate(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "fake-cloud.json")

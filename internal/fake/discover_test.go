@@ -92,9 +92,9 @@ func TestDiscoverIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestDiscoverFiltersByType. §25's `infra discover aws.rds` asks one question of
-// a large account, and answering it by fetching everything and discarding most
-// is how discovery becomes too slow to use.
+// TestDiscoverFiltersByType. `infrata discover aws.rds` asks one question of a
+// large account, and answering it by fetching everything and discarding most is
+// how discovery becomes too slow to use.
 func TestDiscoverFiltersByType(t *testing.T) {
 	p, path := newTestProvider(t)
 	writeCloud(t, path, preexisting())
@@ -128,7 +128,7 @@ func TestDiscoverOnAnEmptyCloudFindsNothing(t *testing.T) {
 	}
 }
 
-// TestImportReadsARealResourceByID — §26. Import adopts what already exists.
+// TestImportReadsARealResourceByID. Import adopts what already exists.
 func TestImportReadsARealResourceByID(t *testing.T) {
 	p, path := newTestProvider(t)
 	writeCloud(t, path, preexisting())

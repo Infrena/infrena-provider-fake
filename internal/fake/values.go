@@ -84,7 +84,7 @@ func fromRaw(raw any) value.Value {
 		}
 		return value.Map(items, value.SourceProvider)
 	case nil:
-		// Unreachable for a top-level attribute (toState skips nulls), but a
+		// Unreachable for a top-level attribute (stateOf skips nulls), but a
 		// null nested inside a list or map lands here. Return the zero Value,
 		// whose KindInvalid fails loudly downstream rather than masquerading
 		// as the string "<nil>".

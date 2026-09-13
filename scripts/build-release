@@ -25,7 +25,7 @@ for platform in $platforms; do
   name="infrata-plugin-fake"
   if [[ "$goos" == windows ]]; then name="$name.exe"; fi
   goarm=""
-  if [[ "$goarch" == arm ]]; then goarm=7; fi   # R10: archived as _linux_arm, per §31.2's convention
+  if [[ "$goarch" == arm ]]; then goarm=7; fi   # still named _linux_arm: install builds the name from <goos>_<goarch> (infrata PLAN.md §31.2)
   stem="infrata-plugin-fake_${version}_${goos}_${goarch}"
 
   work="$(mktemp -d)"

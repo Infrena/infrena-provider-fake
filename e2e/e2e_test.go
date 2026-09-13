@@ -210,7 +210,7 @@ func TestTheWorkflow(t *testing.T) {
 		}
 		expect(t, dir, 2, []string{"0 failed"}, "apply", "dev", "--auto-approve")
 		if ops := planOps(t, dir); len(ops) != 0 {
-			t.Fatalf("plan after removing tags still proposes %v — the update did not remove them (D4)", ops)
+			t.Fatalf("plan after removing tags still proposes %v — Update did not remove the attributes the configuration dropped", ops)
 		}
 	})
 	t.Run("an injected failure fails the apply, once", func(t *testing.T) {
@@ -280,7 +280,7 @@ func TestTwoInstancesKeepSeparateClouds(t *testing.T) {
 	}
 }
 
-// TestTheInfrataUnderTestSpeaksTheManifestsProtocol applies §31.2's compatibility rules to the
+// TestTheInfrataUnderTestSpeaksTheManifestsProtocol applies infrata PLAN.md §31.2's compatibility rules to the
 // infrata this suite built, reading what that build says it speaks from `infrata version --output`.
 // The release rule (AllowsInfrata) exempts a development build, which a checkout build is, so it
 // only bites against a release-stamped infrata; plugin.yaml states no `infrata` constraint today.

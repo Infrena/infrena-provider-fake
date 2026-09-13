@@ -67,7 +67,7 @@ func TestTheImplicitInstanceKeepsTheHistoricalPath(t *testing.T) {
 	}
 }
 
-// TestAnAbsoluteCloudPathIsUsedAsWritten (D9). Joining it onto the project directory would
+// TestAnAbsoluteCloudPathIsUsedAsWritten. Joining it onto the project directory would
 // quietly point the instance at a different, empty cloud.
 func TestAnAbsoluteCloudPathIsUsedAsWritten(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "elsewhere.json")

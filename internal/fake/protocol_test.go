@@ -82,7 +82,7 @@ func TestACreateRoundTripsThroughTheHost(t *testing.T) {
 }
 
 // TestADiscoveredSecretIsRedactedByTheHost. This plugin deliberately does NOT mark sensitive
-// values (D3); the host forces it from the schema. This is the test that says so end to end.
+// values, because the host forces sensitivity from the schema. This is the test that says so end to end.
 func TestADiscoveredSecretIsRedactedByTheHost(t *testing.T) {
 	host, dir := openHost(t)
 	if err := (&Cloud{Resources: map[string]*CloudResource{

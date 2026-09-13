@@ -7,7 +7,7 @@ import (
 
 // TestEveryTypeIsValidAndPrefixed. The host refuses a plugin on load for either failure,
 // and the refusal names the plugin rather than the definition, so catch it here first.
-// Task 5's protocol test proves the same thing through the real host.
+// TestSchemasLoadThroughTheHost in protocol_test.go proves the same thing through the real host.
 func TestEveryTypeIsValidAndPrefixed(t *testing.T) {
 	defs := definitions()
 	if len(defs) != 3 {

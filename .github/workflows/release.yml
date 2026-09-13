@@ -2,7 +2,7 @@ name: Release
 
 # Triggered by a version tag. Mirrors infrata's own release workflow: one runner cross-compiles
 # every platform, the version is stamped by -ldflags and nowhere else, and nothing is published
-# unless the tag, plugin.yaml's version and the binary's reported version agree (PLAN.md §31.2).
+# unless the tag, plugin.yaml's version and the binary's reported version agree (infrata PLAN.md §31.2).
 
 on:
   push:
@@ -24,6 +24,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: infrata-provider-fake
+      # Deliberately unpinned: every release is tested against infrata's latest main, so a
+      # breaking infrata change fails the release instead of shipping a plugin verified against
+      # a stale host.
       - uses: actions/checkout@v7
         with:
           repository: infrata/infrata
