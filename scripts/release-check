@@ -5,6 +5,10 @@
 #
 # FAKE_VERSION_SYMBOL overrides the -ldflags -X target. It exists so a test can simulate the
 # variable being renamed, which `go build -X` otherwise ignores in silence.
+#
+# FAKE_MANIFEST overrides the manifest path (default plugin.yaml, relative to the repo root).
+# It exists so a test can feed a manifest other than the repo's own — e.g. one with CRLF line
+# endings — which no test could otherwise reach.
 set -euo pipefail
 
 tag="${1:?usage: scripts/release-check vMAJOR.MINOR.PATCH}"
@@ -15,14 +19,15 @@ if [[ "$tag" != v* || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 cd "$(dirname "$0")/.."
+manifest="${FAKE_MANIFEST:-plugin.yaml}"
 
-manifest_version="$(sed -n 's/^version:[[:space:]]*//p' plugin.yaml | tr -d "\"' ")"
+manifest_version="$(sed -n 's/^version:[[:space:]]*//p' "$manifest" | tr -d "\"' \r")"
 if [[ -z "$manifest_version" ]]; then
-  echo "release-check: plugin.yaml has no top-level version: line" >&2
+  echo "release-check: $manifest has no top-level version: line" >&2
   exit 1
 fi
 if [[ "$manifest_version" != "$version" ]]; then
-  echo "release-check: tag $tag names version $version, but plugin.yaml says $manifest_version" >&2
+  echo "release-check: tag $tag names version $version, but $manifest says $manifest_version" >&2
   exit 1
 fi
 

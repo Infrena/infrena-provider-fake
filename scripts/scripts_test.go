@@ -64,6 +64,29 @@ func TestReleaseCheckRefusesATagTheManifestDoesNotName(t *testing.T) {
 	}
 }
 
+// TestReleaseCheckAcceptsACRLFManifest. A checkout with CRLF line endings must not block a
+// genuine release: the manifest's version still agrees, a trailing \r is not a disagreement.
+func TestReleaseCheckAcceptsACRLFManifest(t *testing.T) {
+	v := manifestVersion(t)
+	data, err := os.ReadFile("../plugin.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crlf := strings.ReplaceAll(string(data), "\n", "\r\n")
+	manifest := filepath.Join(t.TempDir(), "plugin.yaml")
+	if err := os.WriteFile(manifest, []byte(crlf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, []string{"FAKE_MANIFEST=" + manifest}, "release-check", "v"+v)
+	if err != nil {
+		t.Fatalf("release-check refused a CRLF manifest that agrees with the tag: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "all say "+v) {
+		t.Errorf("release-check did not confirm the agreement:\n%s", out)
+	}
+}
+
 // TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion. `go build -X` on a symbol that
 // does not exist is silently ignored, so a renamed Version variable would ship every
 // archive reporting 0.0.0-dev. This simulates exactly that drift.
