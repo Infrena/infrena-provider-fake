@@ -2154,8 +2154,28 @@ go test -tags e2e -count=1 -v ./e2e/
 Expected: no `gofmt` output; `ok`; both e2e tests PASS (not SKIP). Then walk AGENT.md §10's
 checklist and tick each item against evidence from this plan's tasks.
 
+- [ ] **Step 1b: Correct this plan against what execution proved**
+
+Apply each correction from the SDD ledger (`.superpowers/sdd/2026-09-13-port-fake-provider/progress.md`,
+lines beginning `Ruling:` and `Plan verification-log facts`) to this document:
+- Task 1 Step 6: replace the `Seen == nth` → `Seen >= nth` sabotage (an equivalent mutant) with moving
+  `rule.Seen++` below the comparison (R3).
+- Task 4 Step 5: the `begin` save sabotage fails only `TestNthReadRuleSurvivesAcrossOperations`, because
+  Create persists the counter itself (R6); the moved `TestNthReadRuleSurvivesAcrossOperations` sets
+  `st.Address`, because Create no longer returns one (R5).
+- Global Constraints: Go `1.27.0`, following infrata's floor (R7).
+- Verification log, new rows: `explain` loads a plugin from the type prefix via `--plugin-dir` with no
+  project file; `plan --output` lists every resource including `kind: "noop"`; the `infrata:` floor is
+  enforced for release builds and exempts development builds; `plugins:` is enforced against the
+  handshake version; the discovery defect and its fix in infrata `de33b4d`; the handshake is readable
+  with the cookie and empty stdin; the SDK's hand-run message has a second line.
+- Decisions table: add R8–R14 in one line each, and D10 for the manifest and release gate (user
+  direction, infrata `PLAN.md` §31.2).
+
 - [ ] **Step 2: Update CLAUDE.md**
 
+`CLAUDE.md` was edited by the infrata session in `5ce4f13` (the contract table gained §31.2, §61,
+`pkg/semver`, `pkg/plugintest`, and the Go 1.27 note): keep those edits; do not rewrite over them.
 Below the title, add `> Project notes (source of truth): Obsidian Vault/projects/labs/infra-tool.md`.
 Replace "Current state" with: what is built (the plugin, the three test layers, the docs); how to run
 each test layer; that the e2e suite needs the `ilan` checkout; and a short "Known limits" list — no
@@ -2590,3 +2610,84 @@ this task is written against its real API: a normal-suite test that parses `plug
 validates it, and asserts `name == PluginName` and `protocol` contains `pluginproto.Version`; plus an
 e2e subtest that `infrata version --output`'s `plugin protocol` set intersects `protocol`. It is not
 specified further here, because an API that does not exist yet cannot be written against honestly.
+
+---
+
+### Task 7b: README — discovery, the compliance suite, and releasing
+
+Added 2026-09-13. Task 7 ran under scope rulings while infrata's discovery was broken (fixed in infrata
+`de33b4d`) and before the e2e suite (Task 6) and the release gate (Task 11) were committed. This task
+adds what those rulings held back, and fixes one wording finding from Task 7's review. Runs after
+Tasks 6 and 11 are complete.
+
+**Files:**
+- Modify: `README.md`, `internal/fake/readme_test.go`
+
+**Interfaces:**
+- Consumes: `e2e/testdata/basic/infra.yml` and `e2e/e2e_test.go` (Task 6); `plugin.yaml`,
+  `scripts/release-check`, `scripts/build-release`, `.github/workflows/release.yml`, `Version` default
+  `0.0.0-dev` (Task 11).
+- Produces: nothing code depends on.
+
+- [ ] **Step 1: Write the failing test**
+
+In `internal/fake/readme_test.go`, extend the `want` list in `TestReadmeQuotesTheTestedExample` with:
+`"infrata discover"`, `"import dev fake.network."`, `"-tags e2e"`, `"INFRATA_SRC"`, `"plugin.yaml"`,
+`"scripts/release-check"`, `"0.0.0-dev"`.
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test -count=1 -run TestReadmeQuotesTheTestedExample ./internal/fake/`
+Expected: FAIL — `README.md never mentions` each of the new strings.
+
+- [ ] **Step 3: Capture real output**
+
+Build both binaries into `bin/` from infrata HEAD (must include `de33b4d`; record `git -C ../ilan log --oneline -1`).
+In a fresh temp project copied from `e2e/testdata/basic/infra.yml`: `apply dev --auto-approve`; add by
+hand to `.infra/fake-cloud.json` a resource `"net-77": {"type": "fake.network", "attributes": {"cidr": "172.16.0.0/12", "id": "net-77"}}`
+(no `address`); run `infrata discover`, then `infrata import dev fake.network.net-77 --generate`, then
+`cat discovered/*.yml`, then `infrata plan dev`. Keep all four outputs and exit codes.
+
+- [ ] **Step 4: Edit README.md**
+
+1. **The cloud file section.** Keep README.md's existing sentence about hand-added resources, and follow it
+   with the Step 3 `discover` and `import … --generate` commands and output, the generated file, and
+   the clean `plan` that follows.
+2. **Injecting failures.** Correct the `seen`/`fired` sentence: `seen` counts matching calls and is written
+   back on every one, whether or not the rule fires; `fired` is set when it fires. Delete both to re-arm a rule.
+3. **Development.** Add the compliance suite: `go test -tags e2e -count=1 ./e2e/`, which builds infrata
+   from `$INFRATA_SRC` (default `../ilan`) and this plugin, and skips with an `E2E SKIPPED:` line when
+   the source is absent. Run it before a release.
+4. **New section "Releasing", after Development.** `plugin.yaml` at the repo root (infrata `PLAN.md`
+   §31.2): quote the file as committed, and say it is read at a release tag, never the default branch.
+   `Version()` reports `0.0.0-dev` in any build a release did not stamp. A `v*` tag runs
+   `.github/workflows/release.yml`: `scripts/release-check` refuses a tag, manifest and binary that
+   disagree; `scripts/build-release` builds every platform in `plugin.yaml` as
+   `infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz` (`.zip` for windows); then `SHA256SUMS`.
+   Show `scripts/release-check v0.1.0` run locally, with its real output.
+5. **Try it / Upgrading.** No change, unless a real command in them no longer matches its output (re-run
+   them; fix any that drifted and say so in the report).
+
+- [ ] **Step 5: Run to verify pass, and try the new parts cold**
+
+Run: `go test -count=1 ./...`
+Expected: `ok`. Then follow the new cloud-file and Releasing commands literally from the README in a fresh
+temp directory; each must print what the README shows.
+
+- [ ] **Step 6: Sabotage**
+
+- Delete the Releasing section → `TestReadmeQuotesTheTestedExample` names `plugin.yaml`, `scripts/release-check`, `0.0.0-dev`.
+- Delete the discover/import example → the same test names `infrata discover` and `import dev fake.network.`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add README.md internal/fake/readme_test.go
+git commit -m "docs: README covers discovery, the compliance suite and releasing
+
+Task 7 held these back while discovery was broken in infrata and before the suite and
+the release gate existed; all three are real now, so the README shows them with real
+output, and a test fails if any of them disappears. Also corrects when seen and fired
+are written back.
+Sabotage-verified: releasing section, discover/import example." -- README.md internal/fake/readme_test.go
+```
