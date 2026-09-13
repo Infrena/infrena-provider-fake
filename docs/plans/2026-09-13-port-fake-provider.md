@@ -2655,13 +2655,185 @@ Sabotage-verified: manifest comparison, binary comparison, dev default, windows 
 
 ---
 
-### Task 12: Validate `plugin.yaml` with infrata's parser (GATED)
+### Task 12: Validate `plugin.yaml` with infrata's parser
 
-Waits on infrata publishing a manifest parser (requested 2026-09-13, user decision). When it exists,
-this task is written against its real API: a normal-suite test that parses `plugin.yaml` with it,
-validates it, and asserts `name == PluginName` and `protocol` contains `pluginproto.Version`; plus an
-e2e subtest that `infrata version --output`'s `plugin protocol` set intersects `protocol`. It is not
-specified further here, because an API that does not exist yet cannot be written against honestly.
+Unblocked 2026-09-13: infrata published `pkg/pluginmanifest` (`ee765b1`), the one parser
+`plugins install` will use (PLAN.md §31.2). Verified in a scratchpad spike: this repository's
+`plugin.yaml` parses with no warnings and `SpeaksProtocol([]int{1})` is true; `go mod tidy` adds
+`require gopkg.in/yaml.v3 v3.0.1 // indirect` and a `go.sum` (R21: transitive through infrata — this
+repository still imports nothing third-party itself).
+
+**Files:**
+- Create: `internal/fake/manifest_test.go`, `go.sum`
+- Modify: `go.mod` (tidy only), `e2e/e2e_test.go`, `CLAUDE.md`, `AGENT.md`, `docs/writing-a-provider.md`
+
+**Interfaces:**
+- Consumes: `pluginmanifest.Parse([]byte) (*Manifest, []string, error)` (warnings in the middle);
+  `(*Manifest).SpeaksProtocol(hostSupports []int) bool`; `(*Manifest).AllowsInfrata(version string) bool`
+  (exempts anything parsing as 0.0.0); `Manifest{Format, Name, Version, Protocol, Platforms, Description, Infrata, Source}`;
+  `pluginproto.Version`; `PluginName`; e2e's `infrataBin`, `skipReason`.
+- Produces: nothing later code depends on.
+
+- [ ] **Step 1: Write the failing test**
+
+`internal/fake/manifest_test.go`:
+
+```go
+package fake
+
+import (
+	"os"
+	"testing"
+
+	"github.com/infrata/infrata/pkg/pluginmanifest"
+	"github.com/infrata/infrata/pkg/pluginproto"
+)
+
+// readManifest parses the repository's plugin.yaml with infrata's own parser: the same code
+// `infrata plugins install` runs against it (PLAN.md §31.2), so a manifest that passes here is one
+// install will accept rather than one a second parser merely agreed with.
+func readManifest(t *testing.T) *pluginmanifest.Manifest {
+	t.Helper()
+	data, err := os.ReadFile("../../plugin.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, warnings, err := pluginmanifest.Parse(data)
+	if err != nil {
+		t.Fatalf("plugin.yaml is not a manifest infrata accepts: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("plugin.yaml parses with warnings, which install would print: %v", warnings)
+	}
+	return m
+}
+
+// TestTheManifestDescribesThisPlugin. The manifest is authoritative for a release (§31.2), so it
+// must name the plugin this binary is and speak the protocol this SDK speaks. The version is not
+// compared here: the code reports 0.0.0-dev until a release stamps it, and scripts/release-check
+// is what asserts tag == manifest == binary.
+func TestTheManifestDescribesThisPlugin(t *testing.T) {
+	m := readManifest(t)
+	if m.Name != PluginName {
+		t.Errorf("plugin.yaml names %q, but this plugin is %q", m.Name, PluginName)
+	}
+	if !m.SpeaksProtocol([]int{pluginproto.Version}) {
+		t.Errorf("plugin.yaml's protocol %v does not include protocol %d, which the SDK this plugin is built with speaks",
+			m.Protocol, pluginproto.Version)
+	}
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `go test -count=1 -run TestTheManifestDescribesThisPlugin ./internal/fake/`
+Expected: FAIL to build — `no required module provides package github.com/infrata/infrata/pkg/pluginmanifest`
+or a missing `go.sum` entry for `gopkg.in/yaml.v3`.
+
+- [ ] **Step 3: Tidy the module**
+
+Run: `GOPROXY=off GOFLAGS=-mod=mod go mod tidy`
+Expected: `go.mod` gains exactly `require gopkg.in/yaml.v3 v3.0.1 // indirect`; `go.sum` is created.
+If anything else changes, stop and report it.
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `gofmt -l . && go vet ./... && go test -count=1 ./...`
+Expected: `ok`.
+
+- [ ] **Step 5: The compliance check against the infrata under test**
+
+In `e2e/e2e_test.go` add `"github.com/infrata/infrata/pkg/pluginmanifest"` to the imports and this test:
+
+```go
+// TestTheInfrataUnderTestSpeaksTheManifestsProtocol applies §31.2's compatibility rules to the
+// infrata this suite built, reading what that build says it speaks from `infrata version --output`.
+// The release rule (AllowsInfrata) exempts a development build, which a checkout build is, so it
+// only bites against a release-stamped infrata; plugin.yaml states no `infrata` constraint today.
+func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
+	if skipReason != "" {
+		t.Skip(skipReason)
+	}
+	out := filepath.Join(t.TempDir(), "version.json")
+	if b, err := exec.Command(infrataBin, "version", "--output", out).CombinedOutput(); err != nil {
+		t.Fatalf("infrata version --output: %v\n%s", err, b)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var info struct {
+		Version string `json:"version"`
+		Formats []struct {
+			Name     string `json:"name"`
+			Versions []int  `json:"versions"`
+		} `json:"formats"`
+	}
+	if err := json.Unmarshal(data, &info); err != nil {
+		t.Fatalf("infrata version --output is not the expected JSON: %v\n%s", err, data)
+	}
+	var protocols []int
+	for _, f := range info.Formats {
+		if f.Name == "plugin protocol" {
+			protocols = f.Versions
+		}
+	}
+	if len(protocols) == 0 {
+		t.Fatalf("infrata version --output lists no plugin protocol:\n%s", data)
+	}
+
+	raw, err := os.ReadFile(filepath.Join("..", "plugin.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := pluginmanifest.Parse(raw)
+	if err != nil {
+		t.Fatalf("plugin.yaml: %v", err)
+	}
+	if !m.SpeaksProtocol(protocols) {
+		t.Errorf("plugin.yaml speaks protocol %v; infrata %s speaks %v", m.Protocol, info.Version, protocols)
+	}
+	if !m.AllowsInfrata(info.Version) {
+		t.Errorf("plugin.yaml's infrata constraint %q does not allow infrata %s", m.Infrata, info.Version)
+	}
+}
+```
+
+Run: `go vet -tags e2e ./e2e/ && go test -tags e2e -count=1 -run TestTheInfrataUnderTestSpeaksTheManifestsProtocol -v ./e2e/`
+Expected: PASS against infrata HEAD (record `git -C ../ilan log --oneline -1`).
+
+- [ ] **Step 6: Documents that said this was waiting**
+
+Run: `grep -n -i "pluginmanifest\|manifest parser\|Task 12\|yaml dependency\|YAML parser\|stdlib\|standard library" CLAUDE.md AGENT.md docs/writing-a-provider.md README.md`
+For each hit that says validation waits on infrata or that no parser exists, change it to the truth:
+`plugin.yaml` is validated by `pkg/pluginmanifest` (the parser `plugins install` uses) in
+`internal/fake/manifest_test.go`, and checked against the infrata under test in the compliance suite.
+In CLAUDE.md, remove the Task 12 item from "Known limits", and next to "Standard library plus
+`github.com/infrata/infrata` only" note that `go.mod`'s `gopkg.in/yaml.v3 // indirect` arrives through
+infrata's `pkg/pluginmanifest` and is not imported here. In AGENT.md's manifest section, one sentence:
+validate your own manifest with `pkg/pluginmanifest.Parse`. In the guide's manifest section, the
+same, citing `ilan/pkg/pluginmanifest/manifest.go` `Parse`. Change nothing else.
+
+- [ ] **Step 7: Sabotage**
+
+Data edits compile trivially. Apply each, run the named test, confirm it fails, then revert by editing back:
+- `plugin.yaml`: `name: fake` → `name: fakes` → `TestTheManifestDescribesThisPlugin`.
+- `plugin.yaml`: `protocol: [1]` → `protocol: [2]` → `TestTheManifestDescribesThisPlugin` and the e2e test.
+- `plugin.yaml`: add a line `descripton: typo` → `readManifest` fails (an unknown key at a known manifest version is an error).
+- `e2e_test.go`: change `f.Name == "plugin protocol"` to `f.Name == "plugin protocols"` → the e2e test fails with "lists no plugin protocol".
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add internal/fake/manifest_test.go go.mod go.sum e2e/e2e_test.go CLAUDE.md AGENT.md docs/writing-a-provider.md
+git commit -m "manifest: plugin.yaml checked by the parser infrata install will use
+
+infrata published pkg/pluginmanifest as the one parser for plugin.yaml, so the manifest
+is validated with the code that will judge it at install, not a second reading that could
+agree with itself; the compliance suite applies the protocol and release rules to the
+infrata under test. yaml.v3 enters go.mod only as infrata's indirect dependency.
+Sabotage-verified: name, protocol, unknown key, protocol lookup." -- internal/fake/manifest_test.go go.mod go.sum e2e/e2e_test.go CLAUDE.md AGENT.md docs/writing-a-provider.md
+```
 
 ---
 
