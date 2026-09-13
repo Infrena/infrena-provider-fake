@@ -284,7 +284,8 @@ has write scope"` is.
 - **stderr is your log.** Infrata prefixes each line with your plugin's name and shows it under
   `--verbose`. It also keeps the last lines, so when a plugin exits unexpectedly the error quotes
   what it said on the way out. That tail is often the only thing that explains a crash — a plugin
-  that dies of a missing credential otherwise reports as `EOF`.
+  that dies of a missing credential otherwise shows up only as "the plugin stopped responding" (the
+  host replaces the bare `EOF` a closed pipe leaves behind with that sentence).
 - **Never log a credential, a token, or the value of a `Sensitive` attribute.** stderr is shown to
   users and captured in CI logs. The redaction machinery protects values that travel through
   infrata; it cannot protect what you print yourself.
@@ -337,7 +338,8 @@ You do not need a cloud account, and you do not need a subprocess.
 - **Test the binary once.** One end-to-end test that builds the binary and runs a real `infrata`
   against it is enough to prove the packaging; everything else is faster and clearer at the two
   levels above. Keep it behind a build tag if it builds infrata itself, so the rest of the suite
-  does not need infrata's source to run. See infrata-provider-fake's `e2e/` for a worked example.
+  does not pay the cost of building the infrata CLI from source. See infrata-provider-fake's `e2e/`
+  for a worked example.
 - **Fake the cloud, not your own code.** Point your plugin at a test double of your cloud's API — a
   `httptest.Server`, or an interface you implement twice — rather than mocking your own methods. A
   test that mocks the thing under test asserts nothing.

@@ -77,8 +77,11 @@ always kept (`connect.go:86`). If the plugin exits unexpectedly, the error messa
 "Its last output was:" (`internal/pluginhost/errors.go:105-117`).
 
 That tail is often the only explanation a user gets. A plugin that dies of a missing credential
-otherwise shows up as a bare `EOF`. It also means anything you print can end up in an error message,
-even without `--verbose` (see [Credentials](#8-credentials)).
+otherwise shows up only as "the plugin stopped responding" — infrata replaces the bare `io.EOF` a
+closed pipe leaves behind with that sentence (`internal/pluginhost/errors.go:100-117`), because "EOF"
+is a Go sentinel, not something a user should have to know means "the plugin exited". It also means
+anything you print can end up in an error message, even without `--verbose` (see
+[Credentials](#8-credentials)).
 
 ### The cookie
 
@@ -147,7 +150,7 @@ says what the host does to the result.
 | `Provider.Read` | type, address, provider ID, attributes | `(nil, nil)` means the resource is gone (`adapter.go:161-163`). Otherwise rebuilt, keeping the bookkeeping from the state infrata already held (`adapter.go:164`). |
 | `Provider.Create` | type, address, desired attributes | `(nil, nil)` becomes an error saying the resource may exist untracked (`adapter.go:173-175`). Otherwise rebuilt, with the address taken from the desired resource (`adapter.go:185-187`). |
 | `Provider.Update` | current and desired, each as type, address, provider ID, attributes | `(nil, nil)` becomes the same error (`adapter.go:200-202`). Otherwise rebuilt from current. |
-| `Provider.Delete` | type, address, provider ID, attributes | Error only; the host rebuilds nothing. Make deleting something already gone succeed, as the fake does (`internal/fake/provider.go:216-230`). Otherwise a resource someone removed by hand turns the next destroy into an error about a resource that no longer exists. |
+| `Provider.Delete` | type, address, provider ID, attributes | Error only; the host rebuilds nothing. Make deleting something already gone succeed, as the fake does (`internal/fake/provider.go:222-236`). Otherwise a resource someone removed by hand turns the next destroy into an error about a resource that no longer exists. |
 | `Provider.Discover` | the types wanted, and a region | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
 | `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrata's `import` command, never by you (`internal/cli/import.go:130-134`). |
 | `Provider.ClassifyError` | *called in your process* | See [section 5](#5-errors-and-retries). |
@@ -213,7 +216,7 @@ so and includes whatever ID you have.
 
 `Discover` answers "what exists?", and that includes resources infrata did not create, which is the
 only reason discovery exists. The fake reports every resource in its cloud file, including ones
-without an infrata address (`internal/fake/provider.go:232-265`). Filter by `req.Types` in your
+without an infrata address (`internal/fake/provider.go:238-271`). Filter by `req.Types` in your
 plugin, using whatever list call your API has for a type. The host passes `req.Types` through and
 does not filter your answer by it (`adapter.go:211-233`).
 
@@ -224,7 +227,7 @@ error, and it fails the whole discovery (`adapter.go:228-231`).
 `Import` adopts one resource by the cloud's own ID. **Check that the ID really is the type you were
 asked for.** `import hetzner.network 42`, where 42 is a server, must be refused. Otherwise state
 records a server as a network, and the next plan proposes replacing real infrastructure to settle
-the mismatch. The fake does this check (`internal/fake/provider.go:288-290`), tested by
+the mismatch. The fake does this check (`internal/fake/provider.go:294-296`), tested by
 `internal/fake/discover_test.go:171`.
 
 ### `Config`
@@ -390,7 +393,7 @@ forever. The one exception: `desired` never contains computed attributes, so a r
 not-in-desired loop must keep those:
 
 ```go
-// internal/fake/provider.go:195-209
+// internal/fake/provider.go:201-215
 	def := definitionOf(obj.Type)
 	for name := range obj.Attributes {
 		if _, wanted := d.Attrs[name]; wanted {
@@ -543,7 +546,7 @@ completed before the crash is still recorded (`client.go:136-140`).
 A user reads your error in a failed apply summary, often in CI, with nothing else to go on. Say what
 failed, what was expected, and what to do about it. `401` is not an error message. `the API rejected
 the token (401): check HCLOUD_TOKEN is set and has write scope` is. The fake's import errors name the
-ID, the file and the actual type (`internal/fake/provider.go:285-290`). Its configuration errors name
+ID, the file and the actual type (`internal/fake/provider.go:291-296`). Its configuration errors name
 the key the user wrote and the one they probably meant (`internal/fake/plugin.go:84-96`).
 
 ---
@@ -580,12 +583,17 @@ because another caller may cancel:
   request is sent, finish reading the response and return the resource. Don't pass a cancelled
   `ctx` into the call that reads the result back and then return that error.
 
-The fake's simulated latency shows the shape. The delay honours `ctx`, and it runs **before** the
-mutation, so cancelling abandons only work that hasn't started:
+The fake's simulated latency shows the shape. `ctx` is checked before anything else — even before
+`latency_ms` is consulted, because an already-cancelled call must not start whether or not there is
+a delay to abandon it in — and the delay itself honours `ctx` too, and runs **before** the mutation,
+so cancelling abandons only work that hasn't started:
 
 ```go
-// internal/fake/provider.go:110-125
+// internal/fake/provider.go:113-131
 func (p *Provider) delay(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c, err := LoadCloud(p.cloudPath)
 	if err != nil {
 		return err
@@ -689,8 +697,10 @@ slow. Without the tag, `go test ./...` never builds it. Run the suite with
 repository by default, and skips if the source isn't there (`e2e/e2e_test.go:32-42`).
 
 Its main test walks the whole workflow against one project (`e2e/e2e_test.go:168-252`): explain,
-plan, apply, a clean re-plan, a hand edit planning as a replacement, a removed attribute converging,
-an injected failure failing the apply once, destroy, and discover plus import. Its projects are
+plan, apply (with a clean re-plan), a hand edit planning as a forced replacement and its repair, a
+removed optional attribute converging, an injected failure failing the apply once, removing a
+resource destroying it, discover plus import adopting what infrata did not create, and finally
+destroy emptying the cloud. Its projects are
 `e2e/testdata/basic/infra.yml` and `e2e/testdata/instances/infra.yml`. The README quotes the first
 byte for byte, and `internal/fake/readme_test.go` fails if they drift apart.
 
