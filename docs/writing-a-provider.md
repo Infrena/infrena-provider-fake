@@ -26,6 +26,7 @@ Contents:
 11. [Depending on infrata today](#11-depending-on-infrata-today)
 12. [The manifest, `plugin.yaml`](#12-the-manifest-pluginyaml)
 13. [The release gate](#13-the-release-gate)
+14. [A real cloud: AWS as the worked example](#14-a-real-cloud-aws-as-the-worked-example)
 
 ---
 
@@ -151,7 +152,7 @@ says what the host does to the result.
 | `Provider.Create` | type, address, desired attributes | `(nil, nil)` becomes an error saying the resource may exist untracked (`adapter.go:173-175`). Otherwise rebuilt, with the address taken from the desired resource (`adapter.go:185-187`). |
 | `Provider.Update` | current and desired, each as type, address, provider ID, attributes | `(nil, nil)` becomes the same error (`adapter.go:200-202`). Otherwise rebuilt from current. |
 | `Provider.Delete` | type, address, provider ID, attributes | Error only; the host rebuilds nothing. Make deleting something already gone succeed, as the fake does (`internal/fake/provider.go:222-236`). Otherwise a resource someone removed by hand turns the next destroy into an error about a resource that no longer exists. |
-| `Provider.Discover` | the types wanted, and a region | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
+| `Provider.Discover` | the types wanted. The request also has a `Region` field, but today's host never sets it: it is always `""` (see [section 14](#regions-a-default-on-the-instance-overridden-per-resource)) | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
 | `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrata's `import` command, never by you (`internal/cli/import.go:130-134`). |
 | `Provider.ClassifyError` | *called in your process* | See [section 5](#5-errors-and-retries). |
 
@@ -675,9 +676,10 @@ in [section 9](#9-what-the-host-enforces-so-you-dont) (`plugintest.go:58-63`).
 `host.Definitions()` returns your schemas after their JSON round trip, which is where a default that
 doesn't survive encoding shows up (`internal/fake/protocol_test.go:31-50`).
 
-The in-memory pipe is `internal/pluginhost.InProcess` (`internal/pluginhost/connect.go:28-58`), the
-same path infrata uses to serve its transitional built-in fake provider when no binary is found
-(`internal/pluginhost/loader.go:118-123`). `pkg/plugintest` exists
+The in-memory pipe is `internal/pluginhost.InProcess` (`internal/pluginhost/connect.go:28-58`).
+infrata's own in-process test suites use it too, to serve a fake provider test double without a
+binary (`internal/cli/main_test.go`, `TestMain`). A shipped infrata build serves nothing that way: it
+carries no provider at all (`internal/cli/context.go:64-83`, `builtinsFor`). `pkg/plugintest` exists
 because a package under `internal/` can't be imported by another module (`plugintest.go:22-24`).
 
 **Know which layer to assert at.** Don't write a layer-1 test that asserts your `Provider` marks
@@ -694,9 +696,9 @@ packaging: the binary name, the search path, the handshake, and real output. `e2
 behind `//go:build e2e` (`e2e/e2e_test.go:1`) because it builds the `infrata` CLI from source, which is
 slow. Without the tag, `go test ./...` never builds it. Run the suite with
 `go test -tags e2e -count=1 ./e2e/`. It looks for the infrata source in `INFRATA_SRC`, or next to this
-repository by default, and skips if the source isn't there (`e2e/e2e_test.go:32-42`).
+repository by default, and skips if the source isn't there (`e2e/e2e_test.go:36-44`, in `TestMain`).
 
-Its main test walks the whole workflow against one project (`e2e/e2e_test.go:168-252`): explain,
+Its main test, `TestTheWorkflow` (`e2e/e2e_test.go:171`), walks the whole workflow against one project: explain,
 plan, apply (with a clean re-plan), a hand edit planning as a forced replacement and its repair, a
 removed optional attribute converging, an injected failure failing the apply once, removing a
 resource destroying it, discover plus import adopting what infrata did not create, and finally
@@ -706,6 +708,12 @@ byte for byte, and `internal/fake/readme_test.go` fails if they drift apart.
 
 Keep this layer small. Each case costs a full process launch, and a failure here tells you less about
 where the bug is than the same failure at layer 1 or 2.
+
+The dependency also runs the other way for this one plugin. infrata's own integration suite builds
+`infrata-plugin-fake` from a sibling checkout of this repository and runs infrata against the binary,
+because infrata no longer ships any provider of its own (`tests/integration/plugin_test.go:15-26`,
+`buildFakePlugin`). Your plugin has no such arrangement. Its binary-level suite is the only proof that
+your packaging works.
 
 ### Sabotage every test
 
@@ -736,7 +744,9 @@ A user who can already use your cloud's CLI shouldn't have to configure anything
 account. Remember that a value there reaches `New` *resolved* (`pkg/provider/provider.go:33-35`). It
 may come from a variable, so it can differ between environments, and the same `providers:` entry
 may mean a different account in `staging` and `prod`. Resolve credentials inside `New`, not at
-package init.
+package init. (Today only `plan` and `apply` resolve variables in `providers:`. `discover`, `import`,
+`refresh` and `destroy` don't: see
+[section 14](#regions-a-default-on-the-instance-overridden-per-resource).)
 
 **Refuse configuration keys you don't recognise, and name both the key written and the keys you
 accept.** If a misspelled `tokne:` is silently ignored, the instance falls back to the environment's
@@ -929,19 +939,61 @@ upgrade (`internal/pluginhost/errors.go:23-46`).
 
 ## 11. Depending on infrata today
 
-`github.com/infrata/infrata` is not yet published as a module you can fetch. Until it is, build
-against a checkout with a `replace` directive:
+`github.com/infrata/infrata` is a private repository, and it stays private until infrata is feature
+complete (`PLAN.md` §31.1, "The repository stays PRIVATE until feature complete"). So there is no
+module version to fetch. The supported setup is a `replace` directive pointing at a checkout of
+infrata next to your plugin:
 
 ```
-// go.mod:10
+// go.mod:12
 replace github.com/infrata/infrata => ../infrata
 ```
 
-This repository expects infrata checked out next to it as `../infrata`. The release workflow reproduces
-that layout by checking out both repositories side by side (`.github/workflows/release.yml:22-32`).
-Nothing else is needed: the SDK and protocol use only the standard library, so a plugin gains no
-third-party dependency from them (`PLAN.md` §31.1). When infrata is published, delete the `replace`
-line and require a real version.
+`../infrata` is the directory `git clone` of infrata creates, so a fresh clone of both repositories
+side by side builds with no extra setup. Nothing else is needed from infrata. The SDK and protocol use
+only the standard library, so a plugin gains no third-party dependency from them (`PLAN.md` §31.1).
+
+### A `replace` builds against a working tree, not a version
+
+`replace => ../infrata` compiles **whatever is on disk** in that checkout, committed or not. A green
+suite therefore proves your plugin works against *your* infrata working tree, which may hold
+uncommitted edits or a stale branch. It does not prove the plugin works against committed infrata.
+This bit this repository once. Its build saw a stale `internal/semver` that infrata had already
+moved, because the checkout on disk wasn't what was committed (`PLAN.md` §31.1, "The repository stays
+PRIVATE until feature complete").
+
+So build releases in CI, from fresh checkouts of both repositories. That is what this repository's
+`.github/workflows/release.yml` does (`release.yml:22-35`). Locally, `git -C ../infrata status` before
+you trust a result.
+
+### CI needs credentials for infrata
+
+Because infrata is private, a CI job can't check it out with the default token. This repository's
+release workflow checks infrata out beside itself using a repository secret, `INFRATA_CHECKOUT_TOKEN`
+(`release.yml:30-35`). Make that secret a fine-grained personal access token scoped to **Contents:
+read-only** on `infrata/infrata` and nothing else. Your plugin's CI needs the same thing: a secret
+like that, and a second `actions/checkout` step with `repository: infrata/infrata`, `path: infrata`
+and that token.
+Check out your own repository into a sibling path, so `../infrata` resolves.
+
+### Keep your module path outside infrata's
+
+**Your plugin's module path must not be under `github.com/infrata/infrata/`.** The official AWS
+plugin, for example, is `github.com/infrata/infrata-provider-aws`, a separate path, not
+`github.com/infrata/infrata/providers/aws`.
+
+The reason is Go's `internal/` rule, which is checked by **import path, not by module**. infrata
+tested this on a scratch copy of its own repository (`PLAN.md` §31.1, "Where the code lives"):
+
+- A nested module named `github.com/infrata/infrata/providers/awsprobe`, with `replace => ../..`,
+  **compiled** while importing `github.com/infrata/infrata/internal/pluginhost`.
+- The identical file in a module named `example.com/outsideprobe` failed with `use of internal package
+  github.com/infrata/infrata/internal/pluginhost not allowed`.
+
+A plugin under infrata's path can therefore quietly depend on engine internals that no other plugin
+can reach, and the compiler never says so. Outside that path, if it compiles, every dependency is one
+any plugin author has. That is also why `pkg/plugintest` exists: `internal/pluginhost` is unreachable
+from a correctly named plugin (`pkg/plugintest/plugintest.go:22-24`).
 
 Your module's own `go` directive must be at least infrata's: `go 1.27.0` as of 2026-09-13 (infrata's
 `go.mod:15`, and this repository's `go.mod:3`). If it's lower, the build fails with Go's ordinary
@@ -968,8 +1020,11 @@ description: A fake provider for testing infrata without a cloud account.
 source: https://github.com/infrata/infrata-provider-fake
 ```
 
-No infrata code reads this file yet. It is written for `infrata plugins install`, which is planned
-but not built (`PLAN.md` §31.2, "Where infrata reads it"). Ship it anyway. Your release gate checks
+infrata can parse and check a manifest: `pkg/pluginmanifest` has `Parse`, `Validate`,
+`SpeaksProtocol`, `Supports` and `AllowsInfrata` (`pkg/pluginmanifest/manifest.go:91-151`, `244`).
+But no infrata command reads one yet. The reader it was written for, `infrata plugins install`, is
+planned but not built (`PLAN.md` §31.1, Phase B; §31.2, "Where infrata reads it"). Loading a plugin
+from the search path never looks at `plugin.yaml`. Ship it anyway. Your release gate checks
 against it (section 13). And once install exists, it will read the manifest at each release tag, so a
 release tagged without one stays without one. The plan is to install such a plugin with only a
 warning (`PLAN.md` §31.2), but then none of the compatibility checks below apply to it.
@@ -1054,8 +1109,8 @@ publish unless they do (`PLAN.md` §31.2, "What a plugin repository owes its own
 You could write a unit test comparing `plugin.yaml` to a constant in the code. That is weaker in two
 ways. Someone can delete or skip a test, but a failing release step blocks the release. And a test
 checks source code, not the binary: it can't catch a build whose `-ldflags` stamp went wrong. The gate
-here runs as the first step of `.github/workflows/release.yml` (`release.yml:38-40`), before tests,
-builds or publishing.
+here runs as the first build step of `.github/workflows/release.yml`, right after checkout and Go
+setup (`release.yml:44-46`), before tests, builds or publishing.
 
 ### Why `Version()` defaults to `0.0.0-dev`
 
@@ -1101,12 +1156,475 @@ infrata-plugin-<name>_<version>_<goos>_<goarch>.tar.gz      (.zip for windows)
 
 `scripts/build-release` builds every platform `plugin.yaml` lists (`build-release:16`). It archives
 each build under that name, with the binary, `plugin.yaml` and `README.md` inside a top-level
-directory of the same stem (`build-release:29-46`). `scripts/scripts_test.go:106-147` checks the names
-and contents. A wrongly named archive is a release nobody can install.
+directory of the same stem (`build-release:29-46`). `scripts/scripts_test.go:108-147`
+(`TestBuildReleaseNamesArchivesByTheInstallConvention`) checks the names and contents. A wrongly named
+archive is a release nobody can install.
 
 After the build, the workflow checksums every archive into a `SHA256SUMS` release asset
-(`.github/workflows/release.yml:55-57`), and then publishes (`release.yml:59-63`). The checksums live
-in the release, not the manifest, because they don't exist until the build does.
+(`.github/workflows/release.yml:61-63`), and then publishes (`release.yml:65-69`). The checksums live
+in the release, not the manifest, because they don't exist until the build does. Every step runs
+against a fresh checkout of infrata's `main`, fetched with `INFRATA_CHECKOUT_TOKEN`
+([section 11](#ci-needs-credentials-for-infrata)).
 
 To release: bump `version` in `plugin.yaml`, commit, tag `v<that version>`, and push the tag. If the
 tag, manifest or binary disagree, the workflow stops before publishing anything.
+
+---
+
+## 14. A real cloud: AWS as the worked example
+
+Everything above applies to any cloud. This section is about what changes when the cloud is real: real
+credentials, many regions, pagination, throttling, eventual consistency. It uses the next plugin,
+`infrata-plugin-aws` (repository `infrata-provider-aws`, module
+`github.com/infrata/infrata-provider-aws`), as the example.
+
+Each topic separates two kinds of statement, and labels them:
+
+- **infrata:** what infrata does, checked against its source, with the file and symbol.
+- **Recommendation:** what an AWS plugin should do. Where it names the AWS SDK for Go v2, the API was
+  checked against the SDK's developer guide (`docs.aws.amazon.com/sdk-for-go/v2/developer-guide`) or
+  its package documentation on `pkg.go.dev`. The design is still a recommendation, not something
+  infrata enforces.
+
+Type names below, such as `aws.vpc`, `aws.subnet` and `aws.rds`, are illustrations drawn from
+infrata's initial AWS resource list (`PLAN.md` §32). This section is not the design of the whole
+plugin.
+
+### The repository, and the SDK dependency
+
+**infrata:** AWS is a plugin in its own repository, building `infrata-plugin-aws`, not a directory
+inside infrata (`PLAN.md` §31.1, "Where the code lives"; §50.1). Its module path must be outside
+`github.com/infrata/infrata/` ([section 11](#keep-your-module-path-outside-infratas)).
+
+The AWS SDK for Go v2 is a third-party dependency, and **that is fine in a plugin's own module**.
+Keeping heavy dependencies out of infrata's core is part of why plugins are separate processes. The
+protocol itself adds no third-party dependency (`PLAN.md` §31.1, opening paragraphs), and
+`hashicorp/go-plugin` was rejected partly because gRPC would go "far past a dependency budget that so
+far holds two libraries"
+(`PLAN.md` §31.1, "Alternatives rejected"). Moving the AWS SDK out of the core module's dependency
+budget was also the original reason for giving AWS its own module (§31.1, "Where the code lives").
+Your plugin's `go.mod` can require whatever the cloud needs. infrata's never sees it.
+
+**infrata:** every command starts its plugins, including `validate`, `explain` and `graph`. So a plugin
+with expensive startup, "like AWS SDK credential resolution", pays for it on every run (`PLAN.md`
+§31.1, "What this costs, recorded before it is built"). **Recommendation:** do no network work in
+`Definitions`, and keep `New` to what configuring an instance needs.
+
+### Credentials and accounts
+
+**infrata:** a `providers:` entry holds two separate maps (`internal/config/declarations.go:43-54`,
+`ProviderDecl`). Every key other than `plugin`, `name`, `default` and `defaults` is the plugin's own
+configuration (`internal/config/providers.go:87-111`, the `default:` branch of the key switch). It
+reaches `New` resolved, as `provider.Config.Values` (`pkg/provider/provider.go`, `Config`). The keys under `defaults:` are
+**attribute defaults for resources**. The plugin is never sent them
+([Regions](#regions-a-default-on-the-instance-overridden-per-resource) shows what they're for). infrata
+has no credential mechanism of its own ([section 8](#8-credentials)), and the plugin process inherits
+infrata's environment.
+
+**Recommendation:**
+
+- **Load credentials the way AWS tooling does.** Use `config.LoadDefaultConfig(ctx, …)` from
+  `github.com/aws/aws-sdk-go-v2/config`. It reads the standard environment variables and the shared
+  `~/.aws/config` and `~/.aws/credentials` files, and resolves the SDK's other credential sources. A
+  user who can already run `aws sts get-caller-identity` shouldn't have to configure anything again.
+- **Accept explicit overrides as named `config` keys**, for example `profile`, passed as
+  `config.WithSharedConfigProfile(profile)`. For a role to assume, take `assume_role_arn` and wrap the
+  loaded credentials with `stscreds.NewAssumeRoleProvider(sts.NewFromConfig(cfg), arn)` inside
+  `aws.NewCredentialsCache(…)`.
+- **One instance per account.** Two accounts means two `providers:` entries with different `name:`s,
+  and resources choose one with `provider:` (`internal/config/decode.go`, the `provider` case).
+  **Regions are not a reason for another instance** (next subsection).
+- **Refuse unknown keys**, naming what you accept. A misspelled `profil:` that is silently ignored
+  falls back to the default credential chain, which may be a different account.
+- **Make `New`'s error actionable.** Consider calling `cfg.Credentials.Retrieve(ctx)` in `New`, so a
+  missing credential fails as a configuration error against the `providers:` entry, not halfway
+  through an apply. Say which sources were in play and what to set, for example: `no AWS credentials
+  found for instance "prod" (profile "prod"): run "aws sso login --profile prod", or set
+  AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY`.
+- **Never log credentials**, and never format them into an error ([section 8](#8-credentials)). An AWS
+  debug log of signed request headers is exactly that.
+
+### Regions: a default on the instance, overridden per resource
+
+The requirement: one plugin instance works across many regions. The user sets a default region once
+and overrides it on any resource, including from a variable.
+
+**infrata:** first, what does **not** work.
+
+- **`DiscoverRequest.Region` is never populated.** `pkg/provider/provider.go:64-67` and
+  `pkg/pluginproto/proto.go:179` declare it, but infrata's only construction of the request is
+  `provider.DiscoverRequest{Types: ask}` (`internal/discovery/walk.go:61`, in `Walk`). No command has
+  a region flag. It is always `""`, so don't implement against it.
+- **`${region}` is not a variable you can use.** `compiler.Options.Region` is declared
+  (`internal/compiler/resolved.go:45`) and read by `seedProcessVariables`
+  (`internal/compiler/compile.go:430`), but nothing ever assigns it. A project that writes `${region}`
+  fails to compile:
+
+  ```
+  Error: undefined variable "region"
+    at infra.yml:7:5
+
+    No variable of that name is in scope.
+
+    Suggested action:
+      Define it in variables.yml, or pass --var region=value.
+  ```
+
+  Use an ordinary declared variable, such as `aws_region`, instead. `PLAN.md` §12.1 ("Variables, so
+  an instance differs per environment") records both dead fields. It says Phase 3 will either add a
+  `--region` flag or remove them, and that the region model below needs neither.
+
+What does work is **instance `defaults:`**. In `internal/compiler/schema.go:42-44`, compilation runs
+`applyInstanceDefaults`, then `applyDefaults` (the schema's own `Default`), then `checkRequired`.
+That order gives three rules:
+
+- A `Required` attribute can be satisfied by the instance's `defaults:`.
+- A value the resource writes itself always wins. `applyInstanceDefaults` skips any attribute already
+  present, any the type doesn't declare, any computed attribute, and any default of the wrong kind.
+  It marks what it fills as a provider-instance default (`schema.go:199-216`).
+- A required attribute set nowhere is refused at compile time, before any AWS call.
+
+`defaults:` values are resolved like configuration, so they can use variables
+(`internal/providers/resolve.go:75`). A `defaults:` key that no type of the plugin declares is refused
+(`internal/providers/prepare.go:335`, `checkDefaults`); a key only some types declare is fine. The
+ladder is documented in `PLAN.md` §12.1, "Resource-attribute defaults live under `defaults:`": the
+resource's own value, then the instance's `defaults:`, then the schema default. A map is replaced
+whole, not merged.
+
+Here is that ladder, run against this repository's fake plugin with `fake.database.size`, which has
+a schema default of `10`. The instance says `defaults: {size: ${db_size}}`, one database writes
+nothing, and one writes `size: 50`:
+
+```
+$ infrata plan dev --var db_size=20
+...
+  + fake.database.uses_default
+      endpoint: (known after apply)
+      engine: "postgres"
+      network: (known after apply)
+      size: 20 [default, from provider instance default]
+
+  + fake.database.writes_its_own
+      endpoint: (known after apply)
+      engine: "postgres"
+      network: (known after apply)
+      size: 50
+```
+
+A misspelled key fails closed:
+
+```
+Error: provider instance "fake" defaults "regoin", which no resource it serves accepts
+```
+
+**Recommendation — the region model:**
+
+- **Every regional AWS type declares `region`** as `{Kind: value.KindString, Required: true, ForceNew:
+  true}`. `ForceNew` is correct because an AWS resource can't move between regions: a changed region
+  is a different resource. Global types, such as IAM roles and policy attachments or Route 53 records,
+  don't declare it.
+- **The instance supplies the default** through `defaults: {region: …}`, and **a resource overrides
+  it** with its own `region:`, as a literal or a variable. The plugin reads the region from the
+  resource's attributes. It never needs a region in its own configuration for CRUD.
+- **Discovery's regions come from `config:`**, for example `discover_regions: [us-east-1, eu-west-1]`.
+  A plugin never receives `defaults:`, and `DiscoverRequest.Region` is always empty, so its own
+  configuration is the only place that list can come from.
+- **One loaded SDK configuration, a client per region.** Call `LoadDefaultConfig` once in `New`. Then
+  either build a client per region with `ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.Region =
+  region })`, or override the region on a single call with the same kind of functional option. The
+  SDK guide documents per-operation overrides as safe for concurrent use.
+- **Make the provider ID carry the region**: `<region>/<id>`, for example `us-east-1/vpc-0abc123`.
+  `Import` receives only a type and an ID, with no region (next-but-one subsection). Say so in
+  `ImportSpec.Description`.
+- **Accounts stay separate instances.** `profile` or `assume_role_arn` stays in `config:`.
+
+```yaml
+variables:
+  dr_region: {type: string}
+
+providers:
+  - plugin: aws
+    profile: prod
+    discover_regions: [us-east-1, eu-west-1]
+    defaults:
+      region: us-east-1
+
+resources:
+  vpc:
+    type: aws.vpc
+    cidr: 10.0.0.0/16          # region from the instance default
+  dr_vpc:
+    type: aws.vpc
+    cidr: 10.1.0.0/16
+    region: ${dr_region}       # overridden per resource, from a variable
+```
+
+**A limitation today: keep `${…}` out of `providers:` if you use discover, import, refresh or
+destroy.** `plan` and `apply` resolve variables in a `providers:` entry, both in its configuration and
+in its `defaults:`. But `discover`, `import`, `refresh` and `destroy` build their provider instances
+with an empty variable scope (`internal/cli/context.go:192`, `registerStateInstances`, and
+`literalOnlyScope` at `:214`). Values from `vars/` files, a variable's `default:` or `--var` don't
+reach them. Checked against a built infrata with this repository's plugin: a project whose provider
+entry used `${aws_region}` planned and applied, but `refresh`, `destroy` and `discover` all failed:
+
+```
+Error: undefined variable "aws_region"
+  at infra.yml:14:5
+  ...
+Error: provider instances could not be configured
+```
+
+A project with literal `providers:` values and a variable on the **resource** (`size: ${db_size}`)
+succeeded at `apply`, `plan`, `refresh`, `discover` and `destroy`. (`import` goes through the same
+instance construction as `discover`, `registerStateInstances`, but was not run.) So until infrata changes this, write `profile`, `discover_regions` and
+`defaults: {region: …}` as literals, and put per-environment region choices on resources, as `dr_vpc`
+does above. A resource's region reaches state as a plain value, so `refresh` and `destroy` don't need
+the variable.
+
+### Discover against a real API
+
+**infrata:** `Walk` asks each **instance** only about types it offers and that were requested. It
+skips an instance that offers none of them (`internal/discovery/walk.go:48-59`). It then sorts every
+result by type and provider ID before naming them (`walk.go:79-85`), so your order doesn't affect
+output. For how the host treats undeclared types and attributes, see
+[`Discover` and `Import`](#discover-and-import): an undeclared type is skipped, but an undeclared
+attribute on a declared type fails the whole discovery.
+
+**Recommendation:**
+
+- **One API family per type, only for the requested types.** `aws.vpc` means `DescribeVpcs`, and
+  `aws.rds` means `DescribeDBInstances`. Don't list what wasn't asked for.
+- **Paginate with the SDK's paginators**, for example `ec2.NewDescribeVpcsPaginator(client, params)`,
+  looping on `HasMorePages()` and `NextPage(ctx)`. **Check `ctx` between pages**: abandoning a read
+  loses nothing ([section 6](#6-cancellation)).
+- **Loop over `discover_regions`** and use each region's client.
+- **Include resources infrata did not create.** Finding those is the only reason discovery exists.
+- **Return only attributes your schema declares**, including `region`.
+- Sort by provider ID if you like, for stable unit tests. The host sorts anyway.
+
+### Import IDs
+
+**infrata:** `infrata import <env> <type>.<provider id>` doesn't pass an arbitrary string to your
+plugin. It runs discovery, looks the selector up among the results as `<type>.<provider id>`, and
+calls `Import` with the discovered type and provider ID (`internal/cli/import.go:161-189`,
+`selectForImport`, and `:130-134`). A selector discovery didn't return is refused with `not found by
+discovery`. A slash in the ID is fine: the selector is matched whole, so
+`aws.vpc.us-east-1/vpc-0abc123` works if `Discover` returned `us-east-1/vpc-0abc123`.
+
+**Recommendation:**
+
+- **Use the same `<region>/<id>` form in `Discover`, `Import` and the provider ID you return from
+  `Create`**, with AWS's own IDs: `vpc-…`, `subnet-…`, `sg-…`, or an RDS instance identifier.
+- **Check the type against the ID and refuse a mismatch**, as the fake does
+  ([`Discover` and `Import`](#discover-and-import)). `aws.subnet` with `us-east-1/vpc-0abc123` names a
+  VPC. Refuse it, naming both, before any API call. Where the prefix doesn't settle it, the describe
+  call does. A malformed ID gets its own error code from EC2 (`InvalidVpcID.Malformed`, for example).
+  Report it as the user's mistake.
+- `(nil, nil)` from `Import` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). Return that
+  for a well-formed ID that doesn't exist.
+
+### Errors and retries
+
+**infrata:** [section 5](#5-errors-and-retries) is the authority. The table there applies unchanged:
+creates and deletes are retried only on `SafeToRetry`; updates also on `ConditionallyRetryable`;
+reads, discovery and import never. "Retried" means up to three attempts in total. A value outside the
+three classes is never retried.
+
+**Recommendation — map SDK errors like this:**
+
+| What happened | How to recognise it (SDK v2) | Classify as |
+| --- | --- | --- |
+| Throttled: AWS refused the request before acting on it | `errors.As(err, &apiErr)` with `apiErr smithy.APIError`, and `apiErr.ErrorCode()` is a key of `retry.DefaultThrottleErrorCodes` (for example `Throttling`, `RequestLimitExceeded`, `TooManyRequestsException`) | `SafeToRetry` |
+| A server fault, a timeout, or a connection lost after the request may have been sent | `apiErr.ErrorFault() == smithy.FaultServer`; `errors.Is(err, context.DeadlineExceeded)`; a `net.Error` in the chain | `ConditionallyRetryable` |
+| Validation, access denied (`UnauthorizedOperation`, `AccessDenied…`), not found on a mutation, a malformed ID | any other `smithy.APIError` | `NotSafeToRetry` |
+| Anything you don't recognise | — | `NotSafeToRetry` |
+
+Two SDK details make that table work. First, when the SDK's own retryer gives up, it wraps the last
+error in `retry.MaxAttemptsError`, which has `Unwrap`, so `errors.As` still finds the `smithy.APIError`
+inside. Second, keep `ClassifyError` a pure function of the error (section 5): infrata's plugin SDK
+asks any one of your configured instances to classify, not necessarily the one that failed.
+
+**Two retry loops.** The SDK retries by default. `retry.NewStandard` makes three attempts, and its
+default retryables include throttling codes, HTTP 500/502/503/504 and connection errors. The package
+documentation doesn't distinguish idempotent operations from others. infrata's executor then retries
+what you classify `SafeToRetry` up to three times, so one throttled create can become nine requests,
+with two backoff schedules multiplied. Choose deliberately:
+
+- **For reads and discovery, let the SDK retry.** infrata never retries them, so the SDK's retryer is
+  the only one there.
+- **For a create with no idempotency token, don't let the SDK resend it silently.** If a
+  `CreateVpc` connection drops after AWS acted, the SDK's retry makes a second VPC that nothing
+  records. `CreateVpc` isn't in EC2's list of calls that accept a `ClientToken`. Disable SDK retries
+  for that call, with `func(o *ec2.Options) { o.RetryMaxAttempts = 1 }` or a client built with
+  `aws.NopRetryer`, and classify the failure honestly so infrata decides.
+- **Where the API accepts a client token** (EC2 lists `RunInstances`, `CreateNatGateway` and
+  `CreateRouteTable`, among others, in "Ensuring idempotency in Amazon EC2 API requests"), set one.
+  A retry with the same token doesn't act twice.
+- If you'd rather keep one backoff loop, set the SDK's attempts to 1 across the board, with
+  `config.WithRetryMaxAttempts(1)`, and retry reads inside your plugin yourself.
+
+**Error messages.** Include the operation, the region, the ID, AWS's error code and message, and the
+request ID (`errors.As(err, &re)` with `re *awshttp.ResponseError`, then `re.ServiceRequestID()`).
+Leave out anything from the request that could be a secret.
+
+### Eventual consistency
+
+**infrata:**
+
+- **`Read` returning `(nil, nil)` means gone.** The adapter turns it into a nil state
+  (`adapter.go:161-163`), `readOne` records that as an observation of absence
+  (`internal/refresh/refresh.go:189-197`), and `operationFor` plans a resource that is in
+  configuration and in state but observed absent as a **create**, noting "the provider no longer
+  reports this resource; it will be recreated" (`internal/planner/planner.go:269-285`).
+- **A read error is not absence.** It stops planning that resource with "A failed read is not
+  evidence that anything was deleted" (`planner.go:207-217`, in `operationFor`).
+- **`apply` doesn't read a resource back after creating it.** The state recorded is exactly what
+  `Create` returned. So a VPC that EC2 hasn't propagated yet is first read on the next `plan` or
+  `refresh`, which in CI can be seconds later.
+
+The EC2 API is documented as eventually consistent: "the result may not be immediately visible to
+subsequent API commands" (EC2 API reference, "Error codes", "Eventual consistency").
+
+**Recommendation:**
+
+- **Build `Create`'s result from the create response** (`CreateVpcOutput.Vpc`), never from a describe
+  call made straight afterwards. Never return `(nil, nil)` ([section 2](#why-nil-nil-from-create-is-an-error)).
+  If the response lacks something computed that the resource needs, poll for it, bounded, before
+  returning. Use an SDK waiter such as `ec2.NewVpcAvailableWaiter(client).Wait(ctx, params, maxWait)`,
+  or your own loop. If it times out, return an error that includes the ID you already have.
+- **Don't report `NotFound` as gone too soon.** A `Read` that gets `InvalidVpcID.NotFound` (or the
+  equivalent for another type) for a resource created moments ago may be looking before AWS
+  propagated it. Returning `(nil, nil)` then makes the next plan propose a **second** VPC. Retry
+  briefly with backoff before concluding it is gone, or return an error. An error is safe: it stops the
+  plan rather than proposing a create. Keep the retry bounded, so a really deleted resource is still
+  reported as gone.
+- **Delete: treat `NotFound` as success** ([section 2](#2-the-two-interfaces-and-what-the-host-does-with-each-result)).
+  Where a dependency's deletion is still propagating (a subnet whose ENIs are still detaching),
+  wait inside the plugin.
+
+### Modelling AWS resources
+
+The flag vocabulary is [section 3](#3-modelling-a-resource-type)'s. A sketch, with the reasoning per
+attribute:
+
+```go
+&schema.ResourceDefinition{
+	Type:        "aws.vpc",
+	Description: "An Amazon VPC.",
+	Attributes: map[string]schema.Attribute{
+		"region": {Kind: value.KindString, Required: true, ForceNew: true, Description: "AWS region"},
+		"cidr":   {Kind: value.KindString, Required: true, ForceNew: true, Description: "Primary IPv4 CIDR block"},
+		"tags":   {Kind: value.KindMap, Description: "Tags"},
+		"id":     {Kind: value.KindString, Computed: true, Description: "VPC ID, e.g. vpc-0abc123"},
+		"arn":    {Kind: value.KindString, Computed: true, Description: "VPC ARN"},
+	},
+	Capabilities: schema.Capabilities{Create: true, Read: true, Update: true, Delete: true, Import: true},
+	ImportID:     schema.ImportSpec{Description: "<region>/<vpc id>, e.g. us-east-1/vpc-0abc123"},
+}
+```
+
+- **`cidr` is `ForceNew`.** AWS lets you associate *additional* CIDR blocks, but not change or
+  disassociate the primary block the VPC was created with (Amazon VPC User Guide, "VPC CIDR blocks").
+  A changed `cidr` means a new VPC, and the plan must say *replace*.
+- **`tags` updates in place.** Tags change without replacing anything, so no `ForceNew`. Remember the
+  [`Update` contract](#the-update-contract): delete the tags `desired` no longer has, don't only
+  add.
+- **IDs and ARNs are `Computed`.** AWS assigns them. A user who sets one gets "is computed and cannot
+  be set".
+- **An RDS master password is `Sensitive`**, and it needs one more thing: AWS never returns it.
+  `rds/types.DBInstance` has `MasterUsername` and `MasterUserSecret`, but no password field. The
+  planner treats an attribute configuration sets and the observed state lacks as a change, "not set on
+  the resource" (`internal/planner/diff.go:90-96`, `diffAttributes`). So a `Read` that drops the
+  password makes every plan propose an update, forever. **In `Read`, carry a write-only attribute
+  forward from `current`**, since the API can't tell you it changed. That is a legitimate use of
+  `current`. (Carrying *bookkeeping* forward is the host's job, [section 9](#9-what-the-host-enforces-so-you-dont).)
+  Or offer RDS's managed secret (`MasterUserSecret`) and keep the password out of state entirely.
+
+#### Requirements are where a real cloud leans hardest
+
+**infrata:** a `schema.Requirement` has a `Name`, the `Types` that satisfy it, `Optional` and a
+`Description` (`pkg/schema/definition.go:13-18`). `checkRequirements` checks every non-optional
+requirement before any provider is called. It reports `"<address>" is missing required <name>`, the
+description, `Satisfied by a resource of type: …`, and suggests adding one
+(`internal/compiler/validate.go:126-156`). Know what it checks, which matters more on AWS than on the
+fake:
+
+- **Satisfied by existence, anywhere in the configuration.** Any resource of any listed type
+  satisfies it (`validate.go:127-130`, `144`). It isn't a check that *this* subnet references *that*
+  VPC, and not that they share an instance or region: a subnet in `eu-west-1` is satisfied by a VPC
+  in `us-east-1`. The order resources are created in still comes from references like
+  `vpc: ${vpc.id}` ([section 4](#4-requirements)).
+- **State doesn't count.** Only resources in the resolved configuration satisfy a requirement
+  (`validate.go:113-125`, the comment on `checkRequirements`). A resource that exists in AWS but
+  isn't declared, such as a VPC another team owns, doesn't satisfy one.
+
+**Recommendation:** declare what AWS itself would reject a create without:
+
+```go
+// aws.subnet
+Requirements: []schema.Requirement{{
+	Name: "vpc", Types: []string{"aws.vpc"},
+	Description: "A subnet must be created inside a VPC",
+}},
+
+// aws.rds
+Requirements: []schema.Requirement{
+	{Name: "subnets", Types: []string{"aws.subnet"}, Description: "An RDS instance needs subnets for its DB subnet group"},
+	{Name: "security_group", Types: []string{"aws.security_group"}, Description: "An RDS instance needs a security group"},
+},
+
+// aws.ecs.service
+Requirements: []schema.Requirement{
+	{Name: "cluster", Types: []string{"aws.ecs.cluster"}, Description: "An ECS service runs in a cluster"},
+	{Name: "task_definition", Types: []string{"aws.ecs.task_definition"}, Description: "An ECS service runs a task definition"},
+},
+```
+
+A project that declares an `aws.subnet` and no VPC then fails before anything touches AWS, in the
+same shape as the fake's example in section 4:
+
+```
+Error: "private_a" is missing required vpc
+  at infra.yml:12:3
+
+  A subnet must be created inside a VPC
+  Satisfied by a resource of type: aws.vpc
+
+  Suggested action:
+    Add a resource of type aws.vpc to this configuration.
+```
+
+(Illustrative, not a captured run: there is no AWS plugin to run yet. The wording comes from
+`validate.go:147-153`, the same code that produced the fake's real output in section 4. The address,
+position and description would come from the project and the schema.)
+
+Use `Types` with more than one entry where AWS really does accept alternatives. Where users commonly
+point at infrastructure they don't manage with infrata, such as an existing VPC passed in as a plain
+ID, `Optional: true` is the honest choice. It records the requirement for `explain` without refusing
+a valid project, at the cost of the early error.
+
+### Testing without an AWS account
+
+[Section 7](#7-testing-without-a-cloud-account)'s three layers apply unchanged. What AWS adds:
+
+- **Layer 1 against a fake of the SDK client, not of your code.** Define a narrow interface holding
+  only the operations you call. The SDK guide's unit-testing page uses exactly this pattern: a method
+  with the client's signature, `(ctx, *Input, ...func(*Options)) (*Output, error)`. Implement it twice:
+  the real `*ec2.Client` satisfies it, and a test double holds a map of VPCs. The SDK also publishes
+  per-operation client interfaces, such as `ec2.DescribeVpcsAPIClient`, which the paginators accept.
+  Test drift, a `NotFound` on read, a throttle, and read-after-create against the double.
+- **Or an `httptest.Server`**, with the client pointed at it through `BaseEndpoint`:
+  `ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.BaseEndpoint = aws.String(srv.URL) })`. This
+  tests the real SDK's serialisation, error decoding and retryer. That is the right place to prove
+  that a throttle response maps to `SafeToRetry` and that you set `RetryMaxAttempts` where you meant
+  to. Use static test credentials, never the environment's.
+- **Layer 2 through `pkg/plugintest`**, exactly as the fake does. It proves the host accepts your
+  schemas (the `aws.` prefix, `region`'s kind, the reserved names) and that classification survives
+  the pipe.
+- **Layer 3: one binary-level suite behind a build tag** (`//go:build e2e`), running a real `infrata`
+  against your built binary, pointed at the fake endpoint or double.
+- **An optional live suite against a real account**, behind **its own** build tag (for example
+  `//go:build live`) and its own credentials. Never run it in the default `go test ./...`. Give it
+  a dedicated, empty account, tag everything it creates, and destroy in `t.Cleanup`. It is the only
+  suite that can catch eventual-consistency and IAM surprises, and it should never be what a
+  contributor without credentials runs by accident.

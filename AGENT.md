@@ -77,6 +77,21 @@ replace github.com/infrata/infrata => ../infrata
 Nothing else is needed: the SDK and everything it depends on is the standard library only, so
 there is no other third-party dependency to pull in.
 
+**A `replace` builds against whatever is on disk in `../infrata`, committed or not.** A green suite
+proves nothing about committed infrata. Build releases in CI from fresh checkouts of both
+repositories. Because infrata is private, CI needs a token to check it out beside your plugin:
+infrata-provider-fake's `.github/workflows/release.yml` uses an `INFRATA_CHECKOUT_TOKEN` secret, which
+should be a fine-grained token scoped to Contents: read-only on `infrata/infrata`.
+
+### Keep your module path outside infrata's
+
+**Your module path must not be under `github.com/infrata/infrata/`.** Go's `internal/` rule is checked
+by import path, not by module. A nested module named `github.com/infrata/infrata/providers/x` compiles
+while importing `github.com/infrata/infrata/internal/pluginhost`, while the same import from
+`example.com/x` fails with `use of internal package … not allowed` (infrata `PLAN.md` §31.1, "Where
+the code lives"). A plugin under infrata's path can quietly depend on engine internals no other plugin
+has. `github.com/infrata/infrata-provider-aws` is outside that path, and correct.
+
 Your module's own `go` directive must be at least infrata's own — 1.27 as of 2026-09-13. With
 `GOTOOLCHAIN=auto` (the default), Go just fetches a new enough toolchain; with a local toolchain
 too old to build it, the build fails with `go: <module>@<version> requires go >= X (running go Y;
@@ -148,7 +163,7 @@ type Provider interface {
 | `Create` | the created resource, **never `(nil, nil)`** | see below |
 | `Update` | the updated resource, **never `(nil, nil)`** | make the resource match `desired` — including removing what `desired` no longer has; `desired` never contains computed attributes, so keep those |
 | `Delete` | error only | deleting something already gone should succeed |
-| `Discover` | everything that exists of the requested types | including resources infrata does not manage |
+| `Discover` | everything that exists of the requested types | including resources infrata does not manage. `DiscoverRequest.Region` is never set by the host: it is always `""`, so don't implement against it |
 | `Import` | one resource by the cloud's own ID | `(nil, nil)` becomes "no such resource" |
 
 **Never return `(nil, nil)` from `Create` or `Update`.** The host turns it into an error saying the
@@ -294,7 +309,8 @@ has write scope"` is.
 - Take credentials the way your cloud's own tooling does — the standard environment variables and
   config files — so that a user who can already use their cloud's CLI does not have to configure
   anything twice. Accept explicit configuration in `providers:` as an override, and remember it may
-  come from a variable, so it can differ per environment.
+  come from a variable, so it can differ per environment. (Today only `plan` and `apply` resolve
+  those variables; see §10.)
 
 ---
 
@@ -433,7 +449,54 @@ ignored for comparison purposes.
 
 ---
 
-## 10. Checklist before calling a plugin done
+## 10. A real cloud
+
+The rules a real cloud adds, condensed. `docs/writing-a-provider.md` §14 has the reasoning, the
+evidence, and AWS worked through as an example.
+
+- **Your cloud's SDK is a fine dependency** in your own module. Keeping such SDKs out of infrata's
+  core is one reason plugins are separate processes.
+- **Credentials:** load them the way your cloud's own tooling does (for AWS, the SDK's
+  `config.LoadDefaultConfig`), take overrides such as a profile or a role as named keys in the
+  instance's configuration, refuse unknown keys, and make `New`'s error say what was tried and what to
+  set. One instance per account.
+- **`config` and `defaults:` are different maps.** Every key other than `plugin`, `name`, `default`
+  and `defaults` in a `providers:` entry reaches `New` as `cfg.Values`. `defaults:` holds attribute
+  defaults for resources, is applied by infrata at compile time, and is **never sent to the plugin**.
+- **Regions: a default on the instance, overridden per resource.** Declare `region` on every regional
+  type as `Required` + `ForceNew`. Users set `defaults: {region: …}` once and override it with a
+  resource's own `region:`. Keep one SDK configuration and a client per region.
+- **Don't rely on a region from infrata.** `DiscoverRequest.Region` is always `""`, and `${region}`
+  is not a variable: it fails with `undefined variable "region"`. The regions `Discover` scans come
+  from a configuration key, such as `discover_regions`.
+- **Today, keep `${…}` out of `providers:`** if users run `discover`, `import`, `refresh` or
+  `destroy`. Those commands resolve provider entries without variables and fail with `undefined
+  variable`. Variables on resources are fine.
+- **Discover:** only the requested types, one API family per type; paginate; check `ctx` between
+  pages; include resources infrata did not create.
+- **Import:** `infrata import` picks from what `Discover` returned, matched as
+  `<type>.<provider id>`. So use one ID form everywhere, carrying anything `Import` needs that isn't in
+  the ID alone (for AWS, `<region>/<id>`). Refuse an ID of the wrong type.
+- **Classify SDK errors against §5:** a throttle AWS refused before acting → `SafeToRetry`; a server
+  fault, timeout or connection lost after sending → `ConditionallyRetryable`; validation, access
+  denied, not-found on a mutation, anything unrecognised → `NotSafeToRetry`.
+- **Don't stack retry loops blindly.** Cloud SDKs retry by default, and infrata retries too. Let the
+  SDK retry reads, which infrata never does. Don't let it silently resend a create that has no
+  idempotency token.
+- **Eventual consistency:** build `Create`'s result from the create response. A `Read` that returns
+  `(nil, nil)` makes the next plan propose creating the resource again, so don't report a
+  just-created resource as gone on a single `NotFound`: retry briefly, or return an error.
+- **Write-only attributes** the API never returns, such as a database master password: carry them
+  forward from `current` in `Read`. Otherwise every plan proposes an update.
+- **Requirements** are satisfied by any resource of a listed type anywhere in configuration, not by
+  state and not by a reference. Declare what the cloud would reject a create without.
+- **Test without an account:** a narrow interface over the SDK client implemented twice, or an
+  `httptest.Server` via the SDK's endpoint override. Put any live-account suite behind its own build
+  tag and credentials, never in the default `go test ./...`.
+
+---
+
+## 11. Checklist before calling a plugin done
 
 - [ ] Binary is named `infrata-plugin-<name>` and `Name()` returns `<name>`
 - [ ] Every resource type is prefixed `<name>.`
