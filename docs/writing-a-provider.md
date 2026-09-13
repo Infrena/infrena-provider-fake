@@ -961,7 +961,7 @@ works with (`PLAN.md` §31.2). This repository's:
 # Read at a release TAG, never at the default branch, which describes unreleased code.
 manifest: 1
 name: fake
-version: 0.1.0
+version: 0.1.1
 protocol: [1]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrata without a cloud account.
@@ -1060,8 +1060,8 @@ builds or publishing.
 ### Why `Version()` defaults to `0.0.0-dev`
 
 Stamping at release time only proves something if an unstamped build reports a **different** value.
-Suppose `Version` defaulted to `"0.1.0"`, the same as `plugin.yaml`. Then a release whose `-X` flag
-named the wrong symbol would still report `0.1.0`, correct by coincidence, and the gate would pass.
+Suppose `Version` defaulted to `"0.1.1"`, the same as `plugin.yaml`. Then a release whose `-X` flag
+named the wrong symbol would still report `0.1.1`, correct by coincidence, and the gate would pass.
 Go's linker ignores an `-X` for a symbol that doesn't exist, without any error
 (`scripts/release-check:6-7`). With the default at `0.0.0-dev`, a broken stamp shows up as a
 mismatch. `scripts/scripts_test.go:93-104` points `-X` at a nonexistent variable and checks that the
