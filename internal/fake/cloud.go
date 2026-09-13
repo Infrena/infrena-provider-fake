@@ -28,11 +28,11 @@ type CloudResource struct {
 // Retryability is how a failure rule names one of the three
 // provider.Retryability classifications in the cloud file.
 //
-// A boolean cannot express the middle category, and spec §15 gives all three
-// materially different executor behaviour: Create is never retried on an
-// ambiguous failure, Delete is retried only when the provider says it is safe.
-// Spec §18 requires a test per category, and this provider is the only thing
-// that will ever produce those errors.
+// A boolean cannot express the middle category, and infrata's executor treats all
+// three differently: a create or delete is never retried on an ambiguous failure,
+// and is retried only when the provider says it is safe (docs/writing-a-provider.md
+// §5 has the table). This provider is the only thing that will ever produce those
+// errors, so every category has to be reachable from the cloud file.
 type Retryability string
 
 const (
@@ -193,8 +193,16 @@ func (c *Cloud) Delay() time.Duration {
 	return time.Duration(c.LatencyMS) * time.Millisecond
 }
 
-// AllocateID returns a stable, increasing provider ID.
+// AllocateID returns a stable, increasing provider ID that no resource in the cloud already has.
+//
+// Hand-editing the cloud file is supported, so a person may add a resource whose ID is ahead of
+// NextID. Skipping any ID already in use keeps the next create from silently overwriting it.
 func (c *Cloud) AllocateID(prefix string) string {
-	c.NextID++
-	return fmt.Sprintf("%s-%d", prefix, c.NextID)
+	for {
+		c.NextID++
+		id := fmt.Sprintf("%s-%d", prefix, c.NextID)
+		if _, taken := c.Resources[id]; !taken {
+			return id
+		}
+	}
 }
