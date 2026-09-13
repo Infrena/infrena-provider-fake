@@ -2000,6 +2000,28 @@ the grep in Step 2 plus re-reading each changed section against the code it desc
    written`.
 7. **§2 table, `Update`.** Add to Notes: "make the resource match `desired` — including removing what
    `desired` no longer has; `desired` never contains computed attributes, so keep those."
+8. **§1 "Depending on infrata" (from item 2).** Also: the module's `go` directive must be at least
+   infrata's own (1.27 as of 2026-09-13), and Go's error for a too-low directive does not name the
+   dependency that caused it.
+9. **§9 Releasing — the manifest.** Every plugin repository ships `plugin.yaml` at its root, per infrata
+   `PLAN.md` §31.2: `manifest: 1` (checked first), `name`, `version`, `protocol` (a list), `platforms`
+   (`GOOS/GOARCH` per published build), `description`; optional `infrata` (a `pkg/semver` constraint;
+   absent means unconstrained, never `">= 0.0.0"`) and `source`. It is read at the release TAG, never
+   the default branch. Deliberately absent: checksums (`SHA256SUMS` is a release asset), asset names
+   (the convention `infrata-plugin-<name>_<version>_<goos>_<goarch>.tar.gz`, `.zip` on Windows), and
+   resource types (`name` implies them). Point at this repository's `plugin.yaml`.
+10. **§9 Releasing — the release gate.** A release must fail unless the git tag, `plugin.yaml`'s
+    `version` and the binary's reported version agree; a drift test is a weaker substitute someone can
+    delete. `Version()` should report `0.0.0-dev` unless a release stamps it with `-ldflags -X`,
+    because a default equal to the manifest's version lets a broken `-ldflags` path pass the gate.
+    Point at `scripts/release-check`, `scripts/build-release` and `.github/workflows/release.yml`.
+11. **§9 Releasing — constraints.** A project's `plugins:` constraint is checked against the version
+    the handshake reports; an unversioned plugin reports `0.0.0` and cannot satisfy any constraint above
+    it. The syntax is `pkg/semver`'s: `>= <= != == > < =`, comma is AND, a bare version pins exactly,
+    `0.4` means `0.4.0`, pre-release ignored.
+12. **§10 checklist.** Add: `plugin.yaml` present and its `name`/`version`/`protocol` agree with the
+    code; the release refuses a tag, manifest and binary that disagree; `Version()` is `0.0.0-dev` in
+    an unstamped build.
 
 - [ ] **Step 2: Check**
 
@@ -2078,7 +2100,20 @@ repository or from `../ilan/pkg/*` and cites `path:line`, so none is invented.
     the artefact `infrata-plugin-<name>`; a project's `plugins: {name: ">= 1.2.0, < 2.0.0"}` constraint
     (comparison operators on MAJOR.MINOR.PATCH, comma is AND; one version per plugin because instances
     share a process); the protocol version, not the Go types, is the compatibility contract.
-11. **Depending on infrata today.** The `replace` directive, until the module is published.
+11. **Depending on infrata today.** The `replace` directive, until the module is published, and the
+    `go` directive, which must be at least infrata's own (1.27 as of 2026-09-13).
+12. **The manifest, `plugin.yaml`.** What infrata `PLAN.md` §31.2 asks of every plugin repository and
+    why its shape follows its purpose (read over the network, before any binary is downloaded, by
+    infrata builds for years): each key and whether it is required; why it is read at a release TAG
+    and never the default branch; why the format is versioned when infrata's configuration language
+    is not; why `infrata` is optional (absent means unconstrained, not `">= 0.0.0"`); and what is
+    deliberately left out (checksums, asset names, resource types) and where each lives instead. This
+    repository's `plugin.yaml` is the worked example.
+13. **The release gate.** Why a release, not a drift test, is what keeps tag, manifest and binary in
+    agreement; why `Version()` reports `0.0.0-dev` until a release stamps it; how `scripts/release-check`
+    reads the version from the binary's own handshake with no infrata involved; the archive naming
+    convention `plugins install` constructs, and `SHA256SUMS`. Cite `scripts/` and
+    `.github/workflows/release.yml`.
 
 - [ ] **Step 2: Verify every claim**
 
