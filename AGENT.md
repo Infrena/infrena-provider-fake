@@ -309,8 +309,10 @@ has write scope"` is.
 - Take credentials the way your cloud's own tooling does — the standard environment variables and
   config files — so that a user who can already use their cloud's CLI does not have to configure
   anything twice. Accept explicit configuration in `providers:` as an override, and remember it may
-  come from a variable, so it can differ per environment. (Today only `plan` and `apply` resolve
-  those variables; see §10.)
+  come from a variable, so it can differ per environment. (This is current infrata design, not a
+  pending fix — see §10: `plan` and `apply` resolve those variables except on an orphaned
+  environment, which takes the same literal-only path as `discover`, `import`, `refresh` and
+  `destroy`.)
 
 ---
 
@@ -466,12 +468,23 @@ evidence, and AWS worked through as an example.
 - **Regions: a default on the instance, overridden per resource.** Declare `region` on every regional
   type as `Required` + `ForceNew`. Users set `defaults: {region: …}` once and override it with a
   resource's own `region:`. Keep one SDK configuration and a client per region.
+- **Changing an instance's default region replaces every resource that relies on it.** `region` is
+  `ForceNew`, and a resource that omits `region:` gets it from `defaults:`. Editing
+  `defaults: {region: …}` therefore plans a destroy-and-create of every resource that inherited the
+  old default. Set `region:` explicitly on any resource that must not move before changing the
+  default. For a stateful resource that must never be replaced this way, infrata's
+  `lifecycle: prevent_destroy: true` turns that plan into a refusal instead.
 - **Don't rely on a region from infrata.** `DiscoverRequest.Region` is always `""`, and `${region}`
   is not a variable: it fails with `undefined variable "region"`. The regions `Discover` scans come
   from a configuration key, such as `discover_regions`.
-- **Today, keep `${…}` out of `providers:`** if users run `discover`, `import`, `refresh` or
-  `destroy`. Those commands resolve provider entries without variables and fail with `undefined
-  variable`. Variables on resources are fine.
+- **`providers:` variables resolve on `plan` and `apply` only — this is current infrata design, not
+  a pending bug** (infrata `PLAN.md` §12.1, "The two state-only paths are the honest cost").
+  `discover`, `import`, `refresh`, `destroy`, and `plan`/`apply` against an orphaned environment
+  (one removed from `environments:` that still has state) all build provider instances from a
+  literal-only variable scope and fail with `undefined variable` on anything else. `refresh` and
+  `destroy` refuse `--var`/`--var-file` outright; `discover` and `import` accept them, but the
+  values never reach `providers:`. The infrata project has been asked to revisit this — no fix is
+  promised. Keep `providers:` entries literal and put variables on resources instead.
 - **Discover:** only the requested types, one API family per type; paginate; check `ctx` between
   pages; include resources infrata did not create.
 - **Import:** `infrata import` picks from what `Discover` returned, matched as

@@ -153,7 +153,7 @@ says what the host does to the result.
 | `Provider.Update` | current and desired, each as type, address, provider ID, attributes | `(nil, nil)` becomes the same error (`adapter.go:200-202`). Otherwise rebuilt from current. |
 | `Provider.Delete` | type, address, provider ID, attributes | Error only; the host rebuilds nothing. Make deleting something already gone succeed, as the fake does (`internal/fake/provider.go:222-236`). Otherwise a resource someone removed by hand turns the next destroy into an error about a resource that no longer exists. |
 | `Provider.Discover` | the types wanted. The request also has a `Region` field, but today's host never sets it: it is always `""` (see [section 14](#regions-a-default-on-the-instance-overridden-per-resource)) | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
-| `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrata's `import` command, never by you (`internal/cli/import.go:130-134`). |
+| `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrata's `import` command, never by you (`internal/cli/import.go:154`). |
 | `Provider.ClassifyError` | *called in your process* | See [section 5](#5-errors-and-retries). |
 
 ### What is never sent
@@ -359,7 +359,7 @@ Mark passwords, tokens and private keys `Sensitive`. Their values are shown as `
 
 (`README.md:84`.) You do not need to mark individual values you return. The host forces the flag
 from the schema onto every value it receives (`adapter.go:348-353`), and
-`internal/fake/protocol_test.go:84-104` is a test of that: the fake marks nothing, and the host
+`internal/fake/protocol_test.go:86-104` is a test of that: the fake marks nothing, and the host
 still redacts. What the host cannot catch is a **schema** that forgets the flag, because the schema
 is the only thing that knows which attributes are secret.
 
@@ -413,7 +413,7 @@ not-in-desired loop must keep those:
 ```
 
 Tested directly by `internal/fake/provider_test.go:249`, and end to end by the e2e subtest "removing
-an optional attribute converges" (`e2e/e2e_test.go:203-213`).
+an optional attribute converges" (`e2e/e2e_test.go:205-213`).
 
 ---
 
@@ -612,7 +612,7 @@ func (p *Provider) delay(ctx context.Context) error {
 }
 ```
 
-`internal/fake/inject_test.go:325-349` checks that a create cancelled during the delay returns
+`internal/fake/inject_test.go:323-347` checks that a create cancelled during the delay returns
 `context.DeadlineExceeded` and leaves the cloud empty.
 
 ---
@@ -686,7 +686,7 @@ because a package under `internal/` can't be imported by another module (`plugin
 sensitive values or carries bookkeeping forward. It shouldn't do either, so that test would pin
 behaviour you are supposed to leave out. Assert instead, through `plugintest`, that the *host* does
 it. The fake has both halves: `internal/fake/provider_test.go:284-299` asserts the plugin leaves
-bookkeeping **unset**, and `internal/fake/protocol_test.go:52-82` and `:84-104` assert the host
+bookkeeping **unset**, and `internal/fake/protocol_test.go:54-82` and `:86-104` assert the host
 re-attaches bookkeeping and redacts a discovered password.
 
 ### Layer 3: the binary, once, behind a build tag
@@ -744,8 +744,10 @@ A user who can already use your cloud's CLI shouldn't have to configure anything
 account. Remember that a value there reaches `New` *resolved* (`pkg/provider/provider.go:33-35`). It
 may come from a variable, so it can differ between environments, and the same `providers:` entry
 may mean a different account in `staging` and `prod`. Resolve credentials inside `New`, not at
-package init. (Today only `plan` and `apply` resolve variables in `providers:`. `discover`, `import`,
-`refresh` and `destroy` don't: see
+package init. (This is infrata's current design, not a pending limitation — `plan` and `apply`
+resolve variables in `providers:`, except on an orphaned environment (one removed from
+`environments:` that still has state), which takes the same literal-only path as `discover`,
+`import`, `refresh` and `destroy`: see
 [section 14](#regions-a-default-on-the-instance-overridden-per-resource).)
 
 **Refuse configuration keys you don't recognise, and name both the key written and the keys you
@@ -1236,10 +1238,15 @@ infrata's environment.
   **Regions are not a reason for another instance** (next subsection).
 - **Refuse unknown keys**, naming what you accept. A misspelled `profil:` that is silently ignored
   falls back to the default credential chain, which may be a different account.
-- **Make `New`'s error actionable.** Consider calling `cfg.Credentials.Retrieve(ctx)` in `New`, so a
-  missing credential fails as a configuration error against the `providers:` entry, not halfway
-  through an apply. Say which sources were in play and what to set, for example: `no AWS credentials
-  found for instance "prod" (profile "prod"): run "aws sso login --profile prod", or set
+- **Make `New`'s error actionable, but weigh the cost of checking eagerly.** Calling
+  `cfg.Credentials.Retrieve(ctx)` in `New` makes a missing credential fail as a configuration error
+  against the `providers:` entry instead of failing halfway through an apply — but that pulls against
+  the earlier advice to keep `New` cheap. Every command that compiles constructs instances at stage
+  4.5, including `validate` and `graph`, so an SSO or assume-role `Retrieve` would then hit the
+  network on every `validate`, not only on `plan` and `apply`. If that cost matters to your users,
+  defer the check to the first real API call instead and accept the later failure point. Whichever
+  you choose, say which sources were in play and what to set, for example: `no AWS credentials found
+  for instance "prod" (profile "prod"): run "aws sso login --profile prod", or set
   AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY`.
 - **Never log credentials**, and never format them into an error ([section 8](#8-credentials)). An AWS
   debug log of signed request headers is exactly that.
@@ -1326,6 +1333,14 @@ Error: provider instance "fake" defaults "regoin", which no resource it serves a
 - **The instance supplies the default** through `defaults: {region: …}`, and **a resource overrides
   it** with its own `region:`, as a literal or a variable. The plugin reads the region from the
   resource's attributes. It never needs a region in its own configuration for CRUD.
+- **Changing the instance's default region replaces every resource that relies on it.** `region` is
+  `ForceNew`, and the ladder above fills it from `defaults:` for any resource that omits it. Editing
+  `defaults: {region: …}` therefore plans a destroy-and-create of every regional resource that
+  inherited the old default, not just the ones a user meant to move. Before changing it, set
+  `region:` explicitly on any resource that must not move. For a resource that must never be
+  replaced this way, infrata's `lifecycle: prevent_destroy: true` turns that plan into a refusal
+  instead of a destroy-and-create (`PLAN.md` §15, §38; enforced at plan time in
+  `internal/compiler/validate.go`).
 - **Discovery's regions come from `config:`**, for example `discover_regions: [us-east-1, eu-west-1]`.
   A plugin never receives `defaults:`, and `DiscoverRequest.Region` is always empty, so its own
   configuration is the only place that list can come from.
@@ -1359,13 +1374,24 @@ resources:
     region: ${dr_region}       # overridden per resource, from a variable
 ```
 
-**A limitation today: keep `${…}` out of `providers:` if you use discover, import, refresh or
-destroy.** `plan` and `apply` resolve variables in a `providers:` entry, both in its configuration and
-in its `defaults:`. But `discover`, `import`, `refresh` and `destroy` build their provider instances
-with an empty variable scope (`internal/cli/context.go:192`, `registerStateInstances`, and
-`literalOnlyScope` at `:214`). Values from `vars/` files, a variable's `default:` or `--var` don't
-reach them. Checked against a built infrata with this repository's plugin: a project whose provider
-entry used `${aws_region}` planned and applied, but `refresh`, `destroy` and `discover` all failed:
+**This is infrata's current design, not a pending bug: keep `${…}` out of `providers:` if you use
+discover, import, refresh, destroy, or plan/apply against an orphaned environment.** `plan` and
+`apply` resolve variables in a `providers:` entry, both in its configuration and in its `defaults:`.
+But `discover`, `import`, `refresh`, `destroy` — and `plan`/`apply` run against an environment that
+has been removed from `environments:` but still has state, an "orphaned" environment (§6.1) — all
+build their provider instances with an empty variable scope (`internal/cli/context.go:192`,
+`registerStateInstances`, and `literalOnlyScope` at `:214`; `internal/cli/plan.go:87` and
+`apply.go:103` take the same `registerStateInstances` path for an orphaned environment). Values from
+`vars/` files, a variable's `default:` or `--var` don't reach any of them. infrata's `PLAN.md` §12.1
+records this deliberately, under "The two state-only paths are the honest cost": none of these
+commands compiles, so none has a variable scope to resolve `providers:` against, and infrata reports
+the interpolation rather than guessing at it. `refresh` and `destroy` refuse `--var`/`--var-file`
+outright, rather than accepting and silently ignoring them; `discover` and `import` accept the flag,
+but its values never reach `providers:` either, for the same reason. The infrata project has been
+asked to revisit this — no fix is promised.
+
+Checked against a built infrata with this repository's plugin: a project whose provider entry used
+`${aws_region}` planned and applied, but `refresh`, `destroy` and `discover` all failed:
 
 ```
 Error: undefined variable "aws_region"
@@ -1376,10 +1402,11 @@ Error: provider instances could not be configured
 
 A project with literal `providers:` values and a variable on the **resource** (`size: ${db_size}`)
 succeeded at `apply`, `plan`, `refresh`, `discover` and `destroy`. (`import` goes through the same
-instance construction as `discover`, `registerStateInstances`, but was not run.) So until infrata changes this, write `profile`, `discover_regions` and
-`defaults: {region: …}` as literals, and put per-environment region choices on resources, as `dr_vpc`
-does above. A resource's region reaches state as a plain value, so `refresh` and `destroy` don't need
-the variable.
+instance construction as `discover`, `registerStateInstances`, but was not run.) So write `profile`,
+`discover_regions` and `defaults: {region: …}` as literals, and put per-environment region choices on
+resources, as `dr_vpc` does above. A resource's region reaches state as a plain value, so `refresh`
+and `destroy` don't need the variable — and neither does removing an environment and applying, which
+is how a user tears one down.
 
 ### Discover against a real API
 
@@ -1406,15 +1433,26 @@ attribute on a declared type fails the whole discovery.
 
 **infrata:** `infrata import <env> <type>.<provider id>` doesn't pass an arbitrary string to your
 plugin. It runs discovery, looks the selector up among the results as `<type>.<provider id>`, and
-calls `Import` with the discovered type and provider ID (`internal/cli/import.go:161-189`,
-`selectForImport`, and `:130-134`). A selector discovery didn't return is refused with `not found by
+calls `Import` with the discovered type and provider ID (`internal/cli/import.go:220-248`,
+`selectForImport`, and `:150`). A selector discovery didn't return is refused with `not found by
 discovery`. A slash in the ID is fine: the selector is matched whole, so
-`aws.vpc.us-east-1/vpc-0abc123` works if `Discover` returned `us-east-1/vpc-0abc123`.
+`aws.vpc.us-east-1/vpc-0abc123` works if `Discover` returned `us-east-1/vpc-0abc123`. **A resource in
+a region your instance doesn't scan can't be imported at all.** `selectForImport` only matches what
+`Discover` returned, and `Discover` only visits `discover_regions`. A VPC sitting in a region missing
+from that list never becomes a selector to import — there is no separate error naming the region, it
+simply isn't offered. **A selector has no way to name a provider instance, either**: `selectForImport`
+keys its candidates by `<type>.<provider id>` alone, so if two instances of your plugin — two AWS
+accounts, say — each discover a resource with the same ID, one silently wins the selector and the
+other is unreachable by `import`.
 
 **Recommendation:**
 
-- **Use the same `<region>/<id>` form in `Discover`, `Import` and the provider ID you return from
-  `Create`**, with AWS's own IDs: `vpc-…`, `subnet-…`, `sg-…`, or an RDS instance identifier.
+- **Keep provider IDs unique where you can, and prefer the `<region>/<id>` form everywhere IDs
+  appear** — in `Discover`, `Import`, and the provider ID you return from `Create` — with AWS's own
+  IDs: `vpc-…`, `subnet-…`, `sg-…`, or an RDS instance identifier. That resolves a collision within
+  one account, but not across two accounts that both discover the same bare ID: the selector still
+  can't tell your instances apart, so a cross-account collision is a real risk to design around, for
+  example by making your IDs carry the account too.
 - **Check the type against the ID and refuse a mismatch**, as the fake does
   ([`Discover` and `Import`](#discover-and-import)). `aws.subnet` with `us-east-1/vpc-0abc123` names a
   VPC. Refuse it, naming both, before any API call. Where the prefix doesn't settle it, the describe
@@ -1438,6 +1476,13 @@ three classes is never retried.
 | A server fault, a timeout, or a connection lost after the request may have been sent | `apiErr.ErrorFault() == smithy.FaultServer`; `errors.Is(err, context.DeadlineExceeded)`; a `net.Error` in the chain | `ConditionallyRetryable` |
 | Validation, access denied (`UnauthorizedOperation`, `AccessDenied…`), not found on a mutation, a malformed ID | any other `smithy.APIError` | `NotSafeToRetry` |
 | Anything you don't recognise | — | `NotSafeToRetry` |
+
+Mapping a server fault to `ConditionallyRetryable` rather than `SafeToRetry` is the safe default,
+not a hedge: `ClassifyError` sees only the `error` value, and has no way to know whether the request
+that failed carried a client token, which is what would make retrying it safe. AWS's own EC2
+guidance, "Ensuring idempotency in Amazon EC2 API requests", recommends retrying a 500 specifically
+for a request that included a client token — a narrower claim than "retry every 500", and exactly
+why classifying blind should lean cautious.
 
 Two SDK details make that table work. First, when the SDK's own retryer gives up, it wraps the last
 error in `retry.MaxAttemptsError`, which has `Unwrap`, so `errors.As` still finds the `smithy.APIError`
