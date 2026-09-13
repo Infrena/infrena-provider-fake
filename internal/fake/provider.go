@@ -107,7 +107,13 @@ func (p *Provider) begin(op, addr string) (*Cloud, error) {
 // OUTSIDE the lock, deliberately: the lock protects the file, and holding it across a sleep
 // would serialise every operation and quietly disarm every concurrency test run against
 // this provider. And BEFORE the mutation, so cancellation abandons only work not yet done.
+//
+// ctx is checked FIRST, before latency_ms is even consulted: an operation that was already
+// cancelled before it started must not start just because there is no delay to abandon it in.
 func (p *Provider) delay(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c, err := LoadCloud(p.cloudPath)
 	if err != nil {
 		return err

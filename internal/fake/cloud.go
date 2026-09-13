@@ -71,7 +71,7 @@ func (r Retryability) valid() bool {
 
 // FailureRule injects a failure. Nth counts from 1; the rule fires once.
 type FailureRule struct {
-	Op      string `json:"op"` // create, read, update, delete
+	Op      string `json:"op"` // create, read, update, delete, discover, import
 	Address string `json:"address"`
 	Nth     int    `json:"nth"`
 	// Retryability is absent by default, meaning not safe to retry.

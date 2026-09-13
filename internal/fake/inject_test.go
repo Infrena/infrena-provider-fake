@@ -348,6 +348,31 @@ func TestCancellationDuringLatencyMutatesNothing(t *testing.T) {
 	}
 }
 
+// TestACancelledContextMutatesNothingWithoutLatency guards the case TestCancellationDuringLatencyMutatesNothing
+// cannot reach: with latency_ms 0, delay used to return nil without consulting ctx at all, so an
+// already-cancelled Create would fall through to the mutation and create a resource nobody asked
+// for — the same bug the latency case guards against, just with the delay's select statement never
+// reached to catch it.
+func TestACancelledContextMutatesNothingWithoutLatency(t *testing.T) {
+	p, path := newTestProvider(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := p.Create(ctx, desired("net", "fake.network", map[string]value.Value{
+		"cidr": value.String("10.0.0.0/16", value.SourceExplicit),
+	}))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create under an already-cancelled context returned %v, want context.Canceled", err)
+	}
+	c, err := LoadCloud(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Resources) != 0 {
+		t.Errorf("a cancelled Create with no latency still created %d resource(s)", len(c.Resources))
+	}
+}
+
 // TestTwoInstancesOnOneFileDoNotLoseUpdates. One plugin process serves every configured
 // instance, so two Providers naming the same cloud file must share a lock (D5).
 //
