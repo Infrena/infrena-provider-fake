@@ -1093,7 +1093,7 @@ Sabotage-verified: persisted counter, classification, lock scope, cancellation, 
 - Produces: `type Plugin struct{}`, `func NewPlugin() *Plugin`, `var Version = "0.1.0"`,
   `func defaultCloudPath(instance string) string`. Binary `infrata-plugin-fake`.
 
-**D9 (a small fix, flagged for review):** `providers/test` joined `cloud:` onto the project directory
+**D9 (a small fix, approved in session 2026-09-13):** `providers/test` joined `cloud:` onto the project directory
 unconditionally, so `cloud: /tmp/x.json` silently became `<project>/tmp/x.json`. An absolute path is
 now used as written. `TestAnAbsoluteCloudPathIsUsedAsWritten` covers it.
 
