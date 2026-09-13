@@ -1,7 +1,46 @@
 # Proposal: a well-known plugin manifest, `plugin.yaml`
 
-**Status:** proposal to infrata, 2026-09-13. The owner decides; nothing here is built in infrata.
-**From:** the `infrata-provider-fake` port. This repository will ship the file once the schema is agreed.
+**Status: ACCEPTED WITH AMENDMENTS, 2026-09-13.** The agreement is **infrata `PLAN.md` §31.2**,
+which is what this repository builds against — not the schema below, which differs from it in five
+places. Read §31.2 first; this file is kept for the reasoning and the facts it established.
+
+**From:** the `infrata-provider-fake` port. Every fact and line number cited below was verified
+against infrata `fba0751` during the review and checked out.
+
+**What §31.2 changed, and why:**
+
+1. **Read the manifest at the git TAG, never the default branch.** The file at the repo root on
+   `main` describes UNRELEASED code, so judging `v0.3.1` by it answers the wrong question — and
+   `raw.githubusercontent.com/<owner>/<repo>/HEAD/plugin.yaml` is the obvious URL an implementer
+   reaches for. Use `refs/tags/<tag>/plugin.yaml`.
+2. **`manifest: 1` added**, checked before any other key. The configuration language deliberately
+   is NOT versioned (§61.2); this is the other case, because a manifest is read over the network by
+   every infrata build for years with no way to upgrade the reader in step with the writer.
+3. **`platforms` added** (`GOOS/GOARCH` per published build), so "is there a build for my machine"
+   is answerable from the file rather than by listing release assets.
+4. **`description` required.** The purpose is SEARCH, and the proposed file said nothing about what
+   a plugin is.
+5. **`infrata` made OPTIONAL**, which answers this proposal's own open question: `">= 0.0.0"` is a
+   value shaped like a constraint that constrains nothing, and absence says the same thing honestly.
+
+**Asks, answered:** (1) schema agreed as amended. (2) DONE — `internal/semver` is now
+`pkg/semver`, importable from this module. (3) read it at INSTALL (Phase B); a plugin with no
+manifest installs with a warning rather than being refused, since Phase A is hand-placed binaries.
+The handshake route is deferred, not rejected. (4) yes.
+
+**Recorded as deliberately absent from the manifest:** checksums (they postdate the build;
+`SHA256SUMS` is a release asset and Phase B's `plugins.lock` records them), asset names (a
+convention mirroring infrata's own releases: `infrata-plugin-<name>_<version>_<goos>_<goarch>.tar.gz`),
+and resource types (`name` already implies them).
+
+**One reversal to note:** the review initially suggested embedding the manifest so the code derives
+from it, then withdrew that. The manifest is authoritative and the binary secondary, so what matters
+is a release-time assertion that the tag, the manifest's `version` and the binary's `Version()` all
+agree — which blocks a release, where a drift test is something a person can delete.
+
+---
+
+*Original proposal follows.*
 
 ## Why
 

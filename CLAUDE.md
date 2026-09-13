@@ -42,13 +42,17 @@ The protocol and the interfaces are defined in the infrata repository, not here:
 | What | Where | Read it for |
 | --- | --- | --- |
 | `PLAN.md` §31.1 | infrata repo | the design, the alternatives rejected, and what the host refuses to trust a plugin with |
+| `PLAN.md` §31.2 | infrata repo | **the agreed `plugin.yaml` manifest** — the schema this repository ships, and why it is read at the git tag |
+| `PLAN.md` §61 | infrata repo | versioning: the product semver, the format versions, and why the config language is not versioned |
 | `pkg/pluginproto` | infrata repo | the wire messages and the protocol version |
 | `pkg/pluginsdk` | infrata repo | `Main(p)` — the whole of a plugin's `main()` |
 | `pkg/provider` | infrata repo | `Plugin` and `Provider`, the two interfaces to implement |
 | `pkg/schema` | infrata repo | how to describe resource types |
 | `pkg/value` | infrata repo | the value model, including per-leaf sensitivity |
+| `pkg/semver` | infrata repo | the version-constraint syntax, for validating this plugin's own `infrata:` field |
+| `pkg/plugintest` | infrata repo | the in-process harness this repository's protocol tests use |
 
-**Read `PLAN.md` §31.1 before writing any code.** It is the specification this repository
+**Read `PLAN.md` §31.1 and §31.2 before writing any code.** It is the specification this repository
 implements, and it records decisions with their reasoning — including several things deliberately
 NOT delegated to plugins, which you must not reimplement here.
 
@@ -57,9 +61,13 @@ second. It holds the API surface, the rules, and the failure modes.
 
 ## Stack and commands
 
-Go 1.24. **Standard library plus `github.com/infrata/infrata` only.** The protocol deliberately
-adds no third-party dependency, and a fake provider that needed one would be evidence of a problem
-in the design rather than in this repository.
+Go 1.27. Infrata's `go.mod` declares that floor as of 2026-09-13, so this module must declare it
+too or it will not build against `../ilan` — and the error Go gives for a too-low `go` directive
+does not name the dependency that caused it.
+
+**Standard library plus `github.com/infrata/infrata` only.** The protocol deliberately adds no
+third-party dependency, and a fake provider that needed one would be evidence of a problem in the
+design rather than in this repository.
 
 ```bash
 go build ./cmd/infrata-plugin-fake   # build the plugin
