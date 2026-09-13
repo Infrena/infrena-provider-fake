@@ -2169,13 +2169,20 @@ lines beginning `Ruling:` and `Plan verification-log facts`) to this document:
   enforced for release builds and exempts development builds; `plugins:` is enforced against the
   handshake version; the discovery defect and its fix in infrata `de33b4d`; the handshake is readable
   with the cookie and empty stdin; the SDK's hand-run message has a second line.
-- Decisions table: add R8–R14 in one line each, and D10 for the manifest and release gate (user
+- Decisions table: add R8–R16 in one line each, and D10 for the manifest and release gate (user
   direction, infrata `PLAN.md` §31.2).
+- Task 8 item 8 and Task 9 item 11: delete the claim that Go's error for a too-low `go` directive
+  "does not name the dependency". It is false: the error reads
+  `go: <module>@<version> requires go >= X (running go Y; …)` (R16, reproduced by Task 8's reviewer).
+  Add the correction to the verification log.
 
 - [ ] **Step 2: Update CLAUDE.md**
 
 `CLAUDE.md` was edited by the infrata session in `5ce4f13` (the contract table gained §31.2, §61,
-`pkg/semver`, `pkg/plugintest`, and the Go 1.27 note): keep those edits; do not rewrite over them.
+`pkg/semver`, `pkg/plugintest`, and the Go 1.27 note): keep those edits; do not rewrite over them —
+with one exception. Its Go 1.27 note says Go's error for a too-low `go` directive "does not name the
+dependency that caused it". That is false (R16): the error names the module. Correct that clause
+and keep the rest of the note.
 Below the title, add `> Project notes (source of truth): Obsidian Vault/projects/labs/infra-tool.md`.
 Replace "Current state" with: what is built (the plugin, the three test layers, the docs); how to run
 each test layer; that the e2e suite needs the `ilan` checkout; and a short "Known limits" list — no
@@ -2655,6 +2662,11 @@ hand to `.infra/fake-cloud.json` a resource `"net-77": {"type": "fake.network", 
    the clean `plan` that follows.
 2. **Injecting failures.** Correct the `seen`/`fired` sentence: `seen` counts matching calls and is written
    back on every one, whether or not the rule fires; `fired` is set when it fires. Delete both to re-arm a rule.
+   **Also correct the retryability paragraph** (Task 7 wrote it; Task 9 found it wrong, R17): state what
+   infrata's executor does with each class per operation exactly as `docs/writing-a-provider.md` and
+   `AGENT.md` §5 now do. Among other things, `conditional` is retried only for an update, never for a
+   create or delete, and reads, discover and import are never retried. Re-read `../ilan/internal/executor`
+   and cite it in the report; the README, the guide and AGENT.md must not disagree.
 3. **Development.** Add the compliance suite: `go test -tags e2e -count=1 ./e2e/`, which builds infrata
    from `$INFRATA_SRC` (default `../ilan`) and this plugin, and skips with an `E2E SKIPPED:` line when
    the source is absent. Run it before a release.
