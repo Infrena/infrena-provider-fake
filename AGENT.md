@@ -392,7 +392,9 @@ download URLs (a convention instead — `infrata-plugin-<name>_<version>_<goos>_
 `.zip` on Windows — one convention beats a field every author can get wrong), and resource types
 (`name` already implies them: a plugin serves `<name>.*` and the host refuses anything else).
 
-See infrata-provider-fake's `plugin.yaml` for a worked example.
+See infrata-provider-fake's `plugin.yaml` for a worked example. Validate your own manifest with
+`pkg/pluginmanifest.Parse` — the same parser `infrata plugins install` will use — rather than
+trusting a hand check that a typo could pass.
 
 ### The release gate
 

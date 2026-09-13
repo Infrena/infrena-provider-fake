@@ -72,9 +72,6 @@ project's `plugins:` constraint or the release gate.
   naming the same file on disk can still race.
 - `go.mod` carries `replace github.com/infrata/infrata => ../ilan` (D7) until infrata publishes the
   module; a sibling checkout named `ilan` is required to build or test this repository at all.
-- `docs/plans/2026-09-13-port-fake-provider.md`'s Task 12 (validate `plugin.yaml` against an
-  infrata-provided manifest parser) is not done and cannot be: it waits on infrata publishing
-  `pkg/pluginmanifest`, which has been requested and does not exist yet.
 
 ## Where the contract lives
 
@@ -111,7 +108,8 @@ toolchain.
 
 **Standard library plus `github.com/infrata/infrata` only.** The protocol deliberately adds no
 third-party dependency, and a fake provider that needed one would be evidence of a problem in the
-design rather than in this repository.
+design rather than in this repository. `go.mod`'s `gopkg.in/yaml.v3 // indirect` arrives through
+infrata's `pkg/pluginmanifest`, not through anything imported here.
 
 ```bash
 go build ./cmd/infrata-plugin-fake   # build the plugin

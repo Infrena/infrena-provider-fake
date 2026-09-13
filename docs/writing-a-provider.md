@@ -994,6 +994,10 @@ Every design decision below follows from those two facts.
 
 (`PLAN.md` §31.2, the key table.)
 
+Validate your own manifest with `pkg/pluginmanifest.Parse` (`ilan/pkg/pluginmanifest/manifest.go`'s
+`Parse`) — the same parser `infrata plugins install` will use — rather than a hand check a typo
+could pass.
+
 ### Why it is read at a release tag
 
 The file on your default branch describes **unreleased** code. Reading it to judge `v1.2.0` answers

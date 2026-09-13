@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/infrata/infrata/pkg/pluginmanifest"
 )
 
 var (
@@ -275,5 +277,57 @@ func TestTwoInstancesKeepSeparateClouds(t *testing.T) {
 	}
 	if got := holds("fake-cloud-acct2.json"); len(got) != 1 || got[0] != "isolated" {
 		t.Errorf("acct2's cloud holds %v, want [isolated]", got)
+	}
+}
+
+// TestTheInfrataUnderTestSpeaksTheManifestsProtocol applies §31.2's compatibility rules to the
+// infrata this suite built, reading what that build says it speaks from `infrata version --output`.
+// The release rule (AllowsInfrata) exempts a development build, which a checkout build is, so it
+// only bites against a release-stamped infrata; plugin.yaml states no `infrata` constraint today.
+func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
+	if skipReason != "" {
+		t.Skip(skipReason)
+	}
+	out := filepath.Join(t.TempDir(), "version.json")
+	if b, err := exec.Command(infrataBin, "version", "--output", out).CombinedOutput(); err != nil {
+		t.Fatalf("infrata version --output: %v\n%s", err, b)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var info struct {
+		Version string `json:"version"`
+		Formats []struct {
+			Name     string `json:"name"`
+			Versions []int  `json:"versions"`
+		} `json:"formats"`
+	}
+	if err := json.Unmarshal(data, &info); err != nil {
+		t.Fatalf("infrata version --output is not the expected JSON: %v\n%s", err, data)
+	}
+	var protocols []int
+	for _, f := range info.Formats {
+		if f.Name == "plugin protocol" {
+			protocols = f.Versions
+		}
+	}
+	if len(protocols) == 0 {
+		t.Fatalf("infrata version --output lists no plugin protocol:\n%s", data)
+	}
+
+	raw, err := os.ReadFile(filepath.Join("..", "plugin.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := pluginmanifest.Parse(raw)
+	if err != nil {
+		t.Fatalf("plugin.yaml: %v", err)
+	}
+	if !m.SpeaksProtocol(protocols) {
+		t.Errorf("plugin.yaml speaks protocol %v; infrata %s speaks %v", m.Protocol, info.Version, protocols)
+	}
+	if !m.AllowsInfrata(info.Version) {
+		t.Errorf("plugin.yaml's infrata constraint %q does not allow infrata %s", m.Infrata, info.Version)
 	}
 }
