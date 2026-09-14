@@ -3,6 +3,10 @@ name: Release
 # Triggered by a version tag. Mirrors infrata's own release workflow: one runner cross-compiles
 # every platform, the version is stamped by -ldflags and nowhere else, and nothing is published
 # unless the tag, plugin.yaml's version and the binary's reported version agree (infrata PLAN.md §31.2).
+#
+# CI tests against the infrata release this plugin declares (go.mod's require, which plugin.yaml's
+# `infrata:` floor matches), and the archives are built against that same tagged module. ci.yml
+# also runs an advisory job against infrata main; it reports, but does not gate, a release.
 
 on:
   push:
@@ -12,58 +16,45 @@ permissions:
   contents: read
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    # REQUIRED. A reusable workflow receives no secrets unless the caller passes them, and without
+    # INFRATA_CHECKOUT_TOKEN every infrata fetch fails with an empty token.
+    secrets: inherit
+
   release:
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: write # to create the release
     env:
       GOTOOLCHAIN: local
+      GOPRIVATE: github.com/infrata/*
     steps:
-      # go.mod replaces github.com/infrata/infrata with ../infrata, so both repositories are checked
-      # out side by side and every step runs from this one's directory.
       - uses: actions/checkout@v7
-        with:
-          path: infrata-provider-fake
-      # Deliberately unpinned: every release is tested against infrata's latest main, so a
-      # breaking infrata change fails the release instead of shipping a plugin verified against
-      # a stale host.
-      - uses: actions/checkout@v7
-        with:
-          repository: infrata/infrata
-          path: infrata
-          # infrata is not public yet; a token with read access to it. Remove once it is.
-          token: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
 
       - uses: actions/setup-go@v7
         with:
           go-version: "1.27"
-          # The repository is checked out into a subdirectory, and setup-go looks for go.sum at the
-          # workspace root by default, which made the module cache restore fail.
-          cache-dependency-path: infrata-provider-fake/go.sum
+
+      # release-check and build-release both compile against infrata, so they get the same tagged
+      # module ci.yml tested, through the same script, rather than a second copy of its setup.
+      - name: Build against the tagged infrata module, not a working tree
+        env:
+          INFRATA_TOKEN: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
+        run: scripts/ci-use-infrata-tag use
 
       - name: Verify the tag, the manifest and the binary agree
-        working-directory: infrata-provider-fake
         run: scripts/release-check "$GITHUB_REF_NAME"
 
-      - name: Test, including the compliance suite against infrata
-        working-directory: infrata-provider-fake
-        run: |
-          set -euo pipefail
-          test -z "$(gofmt -l .)"
-          go vet ./...
-          go test -count=1 ./...
-          go test -tags e2e -count=1 ./e2e/
-
       - name: Build every platform in plugin.yaml
-        working-directory: infrata-provider-fake
         run: scripts/build-release "${GITHUB_REF_NAME#v}" dist
 
       - name: Checksums
-        working-directory: infrata-provider-fake/dist
+        working-directory: dist
         run: sha256sum ./*.tar.gz ./*.zip > SHA256SUMS && cat SHA256SUMS
 
       - name: Publish the release
-        working-directory: infrata-provider-fake
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag dist/*

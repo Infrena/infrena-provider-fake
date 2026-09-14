@@ -6,4 +6,8 @@ version: 0.1.1
 protocol: [1]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrata without a cloud account.
+# The oldest infrata release CI verifies this plugin against: go.mod's require, which ci.yml
+# builds and runs the e2e suite with. Nothing refuses a mismatched host at runtime yet; infrata
+# checks this at install (PLAN.md §31.3), which is designed but not built.
+infrata: ">= 0.2.0"
 source: https://github.com/infrata/infrata-provider-fake

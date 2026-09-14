@@ -282,8 +282,11 @@ func TestTwoInstancesKeepSeparateClouds(t *testing.T) {
 
 // TestTheInfrataUnderTestSpeaksTheManifestsProtocol applies infrata PLAN.md §31.2's compatibility rules to the
 // infrata this suite built, reading what that build says it speaks from `infrata version --output`.
-// The release rule (AllowsInfrata) exempts a development build, which a checkout build is, so it
-// only bites against a release-stamped infrata; plugin.yaml states no `infrata` constraint today.
+// The release rule (AllowsInfrata) exempts only a host reporting 0.0.0. Since infrata has tags, a
+// plain `go build` of its checkout is not that: Go stamps the module version from git, so a clean
+// checkout AT v0.2.0 reports 0.2.0, and one commit past it reports 0.2.1-0.<time>-<hash>, which
+// compares as 0.2.1 (both measured 2026-09-13). So this checks plugin.yaml's `infrata:` floor
+// against the release CI's tag job builds its host from, and against main in the advisory job.
 func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 	if skipReason != "" {
 		t.Skip(skipReason)

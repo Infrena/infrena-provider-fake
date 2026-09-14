@@ -145,3 +145,97 @@ func TestBuildReleaseNamesArchivesByTheInstallConvention(t *testing.T) {
 		}
 	}
 }
+
+// moduleCopy writes a go.mod and go.sum into a fresh directory for FAKE_MODULE_DIR, so a test
+// can doctor them without touching the repository's own.
+func moduleCopy(t *testing.T, gomod, gosum string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte(gosum), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func readRepoFile(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds is the guard for committed checksums, and
+// it is not dead weight. CI drops go.mod's `replace => ../infrata` and builds the tagged infrata
+// module under -mod=readonly, which needs go.sum to already hold that module's hashes: a hash
+// CI wrote for itself would verify nothing. But `go mod tidy` run locally, with the replace
+// present, strips infrata's hashes — so without this test a routine tidy passes every local
+// check and breaks only the next push. Here it breaks the next `go test ./...` instead, with the
+// restore command in the failure.
+func TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds(t *testing.T) {
+	if out, err := run(t, nil, "ci-use-infrata-tag", "check"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// TestCheckRefusesAGoSumThatTidyStripped. The repository's go.sum passing proves nothing unless a
+// stripped one fails, so each case removes exactly the lines a tidy-with-replace can remove.
+func TestCheckRefusesAGoSumThatTidyStripped(t *testing.T) {
+	gomod, gosum := readRepoFile(t, "go.mod"), readRepoFile(t, "go.sum")
+	version, err := run(t, nil, "ci-use-infrata-tag", "version")
+	if err != nil {
+		t.Fatalf("version: %v\n%s", err, version)
+	}
+	version = strings.TrimSpace(version)
+
+	for name, drop := range map[string]string{
+		"infrata's module hash": "github.com/infrata/infrata " + version + " h1:",
+		"infrata's go.mod hash": "github.com/infrata/infrata " + version + "/go.mod h1:",
+		"an indirect module":    "gopkg.in/yaml.v3 ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var kept []string
+			for _, line := range strings.SplitAfter(gosum, "\n") {
+				if !strings.HasPrefix(line, drop) {
+					kept = append(kept, line)
+				}
+			}
+			stripped := strings.Join(kept, "")
+			if stripped == gosum {
+				t.Fatalf("the repository's go.sum has no line starting %q, so this case strips nothing", drop)
+			}
+			dir := moduleCopy(t, gomod, stripped)
+			out, err := run(t, []string{"FAKE_MODULE_DIR=" + dir}, "ci-use-infrata-tag", "check")
+			if err == nil {
+				t.Fatalf("check accepted a go.sum without %q:\n%s", drop, out)
+			}
+			for _, want := range []string{"go mod tidy", "replace", "scripts/ci-use-infrata-tag sum"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the refusal does not mention %q:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+// TestVersionRefusesARequireThatIsNotARelease. A pseudo-version or the old v0.0.0 placeholder
+// would make CI's infrata checkout ref meaningless, so it must stop at the first step.
+func TestVersionRefusesARequireThatIsNotARelease(t *testing.T) {
+	gomod := strings.Replace(readRepoFile(t, "go.mod"),
+		"require github.com/infrata/infrata v", "require github.com/infrata/infrata v0.0.0-20260913000000-000000000000 // was v", 1)
+	if !strings.Contains(gomod, "v0.0.0-2026") {
+		t.Fatal("go.mod has no single-line `require github.com/infrata/infrata v…` to doctor")
+	}
+	dir := moduleCopy(t, gomod, readRepoFile(t, "go.sum"))
+	out, err := run(t, []string{"FAKE_MODULE_DIR=" + dir}, "ci-use-infrata-tag", "version")
+	if err == nil {
+		t.Fatalf("version accepted a pseudo-version require:\n%s", out)
+	}
+	if !strings.Contains(out, "not a release tag") {
+		t.Errorf("the refusal does not say why:\n%s", out)
+	}
+}
