@@ -309,10 +309,10 @@ has write scope"` is.
 - Take credentials the way your cloud's own tooling does — the standard environment variables and
   config files — so that a user who can already use their cloud's CLI does not have to configure
   anything twice. Accept explicit configuration in `providers:` as an override, and remember it may
-  come from a variable, so it can differ per environment. (This is current infrata design, not a
-  pending fix — see §10: `plan` and `apply` resolve those variables except on an orphaned
-  environment, which takes the same literal-only path as `discover`, `import`, `refresh` and
-  `destroy`.)
+  come from a variable, so it can differ per environment. (This is current infrata design — see
+  §10: `plan`, `apply`, `refresh` and `destroy` all resolve those variables against the
+  environment named on the command line. `discover` and `import` take no environment and resolve
+  only what doesn't need one, refusing anything else by name.)
 
 ---
 
@@ -476,15 +476,21 @@ evidence, and AWS worked through as an example.
   `lifecycle: prevent_destroy: true` turns that plan into a refusal instead.
 - **Don't rely on a region from infrata.** `DiscoverRequest.Region` is always `""`, and `${region}`
   is not a variable: it fails with `undefined variable "region"`. The regions `Discover` scans come
-  from a configuration key, such as `discover_regions`.
-- **`providers:` variables resolve on `plan` and `apply` only — this is current infrata design, not
-  a pending bug** (infrata `PLAN.md` §12.1, "The two state-only paths are the honest cost").
-  `discover`, `import`, `refresh`, `destroy`, and `plan`/`apply` against an orphaned environment
-  (one removed from `environments:` that still has state) all build provider instances from a
-  literal-only variable scope and fail with `undefined variable` on anything else. `refresh` and
-  `destroy` refuse `--var`/`--var-file` outright; `discover` and `import` accept them, but the
-  values never reach `providers:`. The infrata project has been asked to revisit this — no fix is
-  promised. Keep `providers:` entries literal and put variables on resources instead.
+  from a configuration key, such as `discover_regions` — keep it resolvable without an environment
+  (a literal, a variable with a `default:`, or one set in `vars/default.yml`), because `discover`
+  takes no environment; a value only an environment sets needs `--var` on `discover` itself.
+- **`providers:` variables resolve on `plan`, `apply`, `refresh` and `destroy`, against the
+  environment named on the command line** (infrata `PLAN.md` §12.1, amended 2026-09-13). `refresh`
+  and `destroy` now accept `--var`/`--var-file`, having refused them outright before. `discover`
+  and `import` build the instance with NO environment at all — `import` takes the same path as
+  bare `discover` ("the same scope discovery has," `internal/cli/import.go`) even though `infrata
+  import <environment>` names one, because that argument selects which environment's *state* gets
+  the import, not which environment's variables resolve `providers:`. So a `providers:` key that
+  only an environment sets is refused BY NAME on both `discover` and `import`, naming the key and
+  suggesting `--var`. `plan`/`apply` against an orphaned environment (removed from `environments:`
+  but still holding state) take that same no-environment path. Give a per-environment `providers:`
+  value a `default:` or a `vars/default.yml` entry if `discover`/`import` must resolve it too,
+  or pass `--var` to those two commands specifically.
 - **Discover:** only the requested types, one API family per type; paginate; check `ctx` between
   pages; include resources infrata did not create.
 - **Import:** `infrata import` picks from what `Discover` returned, matched as

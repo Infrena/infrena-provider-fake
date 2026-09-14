@@ -744,10 +744,10 @@ A user who can already use your cloud's CLI shouldn't have to configure anything
 account. Remember that a value there reaches `New` *resolved* (`pkg/provider/provider.go:33-35`). It
 may come from a variable, so it can differ between environments, and the same `providers:` entry
 may mean a different account in `staging` and `prod`. Resolve credentials inside `New`, not at
-package init. (This is infrata's current design, not a pending limitation — `plan` and `apply`
-resolve variables in `providers:`, except on an orphaned environment (one removed from
-`environments:` that still has state), which takes the same literal-only path as `discover`,
-`import`, `refresh` and `destroy`: see
+package init. (This is infrata's current design — `plan`, `apply`, `refresh` and `destroy` all
+resolve variables in `providers:` against the environment named on the command line. `discover`
+and `import` take no environment, so they resolve only what doesn't need one and refuse anything
+else by name: see
 [section 14](#regions-a-default-on-the-instance-overridden-per-resource).)
 
 **Refuse configuration keys you don't recognise, and name both the key written and the keys you
@@ -1343,7 +1343,10 @@ Error: provider instance "fake" defaults "regoin", which no resource it serves a
   `internal/compiler/validate.go`).
 - **Discovery's regions come from `config:`**, for example `discover_regions: [us-east-1, eu-west-1]`.
   A plugin never receives `defaults:`, and `DiscoverRequest.Region` is always empty, so its own
-  configuration is the only place that list can come from.
+  configuration is the only place that list can come from. **Keep it resolvable without an
+  environment**, because `discover` takes none (below): a literal list, a variable with a
+  `default:`, or one set in `vars/default.yml` all work; a variable only an environment sets needs
+  `--var` on `discover` itself, or the instance holding it is refused by name.
 - **One loaded SDK configuration, a client per region.** Call `LoadDefaultConfig` once in `New`. Then
   either build a client per region with `ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.Region =
   region })`, or override the region on a single call with the same kind of functional option. The
@@ -1355,14 +1358,16 @@ Error: provider instance "fake" defaults "regoin", which no resource it serves a
 
 ```yaml
 variables:
+  aws_profile: {type: string}
+  aws_region: {type: string}
   dr_region: {type: string}
 
 providers:
   - plugin: aws
-    profile: prod
+    profile: ${aws_profile}
     discover_regions: [us-east-1, eu-west-1]
     defaults:
-      region: us-east-1
+      region: ${aws_region}
 
 resources:
   vpc:
@@ -1374,39 +1379,62 @@ resources:
     region: ${dr_region}       # overridden per resource, from a variable
 ```
 
-**This is infrata's current design, not a pending bug: keep `${…}` out of `providers:` if you use
-discover, import, refresh, destroy, or plan/apply against an orphaned environment.** `plan` and
-`apply` resolve variables in a `providers:` entry, both in its configuration and in its `defaults:`.
-But `discover`, `import`, `refresh`, `destroy` — and `plan`/`apply` run against an environment that
-has been removed from `environments:` but still has state, an "orphaned" environment (§6.1) — all
-build their provider instances with an empty variable scope (`internal/cli/context.go:192`,
-`registerStateInstances`, and `literalOnlyScope` at `:214`; `internal/cli/plan.go:87` and
-`apply.go:103` take the same `registerStateInstances` path for an orphaned environment). Values from
-`vars/` files, a variable's `default:` or `--var` don't reach any of them. infrata's `PLAN.md` §12.1
-records this deliberately, under "The two state-only paths are the honest cost": none of these
-commands compiles, so none has a variable scope to resolve `providers:` against, and infrata reports
-the interpolation rather than guessing at it. `refresh` and `destroy` refuse `--var`/`--var-file`
-outright, rather than accepting and silently ignoring them; `discover` and `import` accept the flag,
-but its values never reach `providers:` either, for the same reason. The infrata project has been
-asked to revisit this — no fix is promised.
+**This is infrata's current design: `plan`, `apply`, `refresh` and `destroy` all resolve
+`providers:` against the environment named on the command line; `discover` and `import` have none
+to resolve it against.** `plan` and `apply` resolve it the ordinary way, through `compiler.Compile`.
+`refresh` and `destroy` — which never compile — now do too: they build the instance through
+`compiler.VariableScope` (`internal/compiler/compile.go`), the same stages 1-4 `Compile` shares,
+handed the environment named on the command line, so `defaults: {region: ${aws_region}}` above
+works on all four. `refresh` and `destroy` therefore now accept `--var` and `--var-file`, which they
+used to refuse outright. `plan`/`apply` run against an environment removed from `environments:` but
+still holding state — an "orphaned" environment, §6.1 — take that same state-only path with an
+EMPTY environment, because the environment's per-environment values went away with its declaration.
 
-Checked against a built infrata with this repository's plugin: a project whose provider entry used
-`${aws_region}` planned and applied, but `refresh`, `destroy` and `discover` all failed:
+`discover` takes no environment at all, so it resolves only what doesn't need one — a declared
+`default:`, `variables.yml`, `vars/default.yml`, `--var` — and refuses an instance still holding an
+unresolved key BY NAME rather than guessing at it (`internal/cli/context.go`,
+`registerStateInstances`/`refuseUnresolvedInstances`, called with `""` for the environment by
+`discoveryRegistry`). **`import` takes that same environment-less path, even though `infrata import
+<environment>` names one on the command line**: `newImportCommand` builds its registry with
+`discoveryRegistry`, "the same scope discovery has" (`internal/cli/import.go`), because import
+adopts what discovery found — that environment argument picks which environment's *state* receives
+the import, not which environment's variables resolve `providers:`. So a `providers:` key that only
+an environment sets is refused by name on `import` exactly as on bare `discover`, and the fix is the
+same: `--var`.
+
+infrata's `PLAN.md` §12.1 (amended 2026-09-13) records why this is possible at all: resolving
+variables is stages 1-4 and needs no registry, no plugins, no resources and no modules, which is
+what makes it available to a command that never compiles.
+
+Checked against a built infrata with this repository's plugin, using `providers: [{plugin: fake,
+cloud: ${cloud_file}, defaults: {size: ${db_size}}}]` with `cloud_file`/`db_size` set per
+environment (`vars/dev.yml`, `vars/prod.yml`): `plan dev`, `apply dev`, `refresh dev` and `destroy
+dev --auto-approve` all resolved the instance and ran. Bare `discover` — no environment to resolve
+either variable against — refused by name:
 
 ```
-Error: undefined variable "aws_region"
-  at infra.yml:14:5
+Error: provider "fake"'s configuration key "cloud" could not be resolved
+  at infra.yml:12:5
+
+  Its value differs per environment, and this command does not take one. Running anyway would use
+  whatever the plugin defaults to, which may be a different account than the one you mean.
+
+  Suggested action:
+    Pass the value with --var, or use a literal here.
+
+Error: provider "fake"'s `defaults` key "size" could not be resolved
   ...
 Error: provider instances could not be configured
 ```
 
-A project with literal `providers:` values and a variable on the **resource** (`size: ${db_size}`)
-succeeded at `apply`, `plan`, `refresh`, `discover` and `destroy`. (`import` goes through the same
-instance construction as `discover`, `registerStateInstances`, but was not run.) So write `profile`,
-`discover_regions` and `defaults: {region: …}` as literals, and put per-environment region choices on
-resources, as `dr_vpc` does above. A resource's region reaches state as a plain value, so `refresh`
-and `destroy` don't need the variable — and neither does removing an environment and applying, which
-is how a user tears one down.
+`discover --var cloud_file=... --var db_size=...` resolved and ran, and so did `import dev --var
+cloud_file=... --var db_size=... <selector>` — for the reason above, `import` hits the identical
+refusal without `--var` that bare `discover` does. So give `profile`, `discover_regions` and
+`defaults: {region: …}` a way to resolve without an environment (a literal, a `default:`, or
+`vars/default.yml`) if you also run `discover` or `import`, and otherwise be ready to pass `--var`
+to those two commands specifically. A resource's own region, like `dr_vpc`'s above, reaches state as
+a plain value, so `refresh` and `destroy` never needed the variable for it — and neither does
+removing an environment and applying, which is how a user tears one down.
 
 ### Discover against a real API
 
