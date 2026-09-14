@@ -475,7 +475,7 @@ committed today:
 # Read at a release TAG, never at the default branch, which describes unreleased code.
 manifest: 1
 name: fake
-version: 0.1.1
+version: 0.2.0
 # The protocol THIS RELEASE'S binary speaks: for an SDK-built plugin, exactly one version, the
 # pluginproto.Version of the infrata go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
@@ -524,8 +524,8 @@ which:
 will not be refused:
 
 ```
-$ scripts/release-check v0.1.1
-release-check: tag, plugin.yaml and binary all say 0.1.1, and speak protocol [2]
+$ scripts/release-check v0.2.0
+release-check: tag, plugin.yaml and binary all say 0.2.0, and speak protocol [2]
 $ echo $?
 0
 ```
