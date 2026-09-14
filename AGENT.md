@@ -177,7 +177,7 @@ type Provider interface {
 | `Create` | the created resource, **never `(nil, nil)`** | see below |
 | `Update` | the updated resource, **never `(nil, nil)`** | make the resource match `desired` — including removing what `desired` no longer has; `desired` never contains computed attributes, so keep those |
 | `Delete` | error only | deleting something already gone should succeed |
-| `Discover` | everything that exists of the requested types | including resources infrata does not manage. `DiscoverRequest.Region` is never set by the host: it is always `""`, so don't implement against it |
+| `Discover` | everything that exists of the requested types | including resources infrata does not manage. `DiscoverRequest` carries only `Types` — there is no region field; a plugin that scans several regions takes them from its own instance `config:` (§10) |
 | `Import` | one resource by the cloud's own ID | `(nil, nil)` becomes "no such resource" |
 
 **Never return `(nil, nil)` from `Create` or `Update`.** The host turns it into an error saying the
@@ -497,11 +497,13 @@ evidence, and AWS worked through as an example.
   old default. Set `region:` explicitly on any resource that must not move before changing the
   default. For a stateful resource that must never be replaced this way, infrata's
   `lifecycle: prevent_destroy: true` turns that plan into a refusal instead.
-- **Don't rely on a region from infrata.** `DiscoverRequest.Region` is always `""`, and `${region}`
-  is not a variable: it fails with `undefined variable "region"`. The regions `Discover` scans come
-  from a configuration key, such as `discover_regions` — keep it resolvable without an environment
-  (a literal, a variable with a `default:`, or one set in `vars/default.yml`), because `discover`
-  takes no environment; a value only an environment sets needs `--var` on `discover` itself.
+- **There is no ambient region.** `DiscoverRequest` has no region field, and infrata seeds no
+  `region` (or `account`) into scope — `region` is an ordinary variable name that a project declares
+  and sets the normal way, like `aws_region` in `docs/writing-a-provider.md` §14's worked example.
+  The regions `Discover` scans come from a configuration key, such as `discover_regions` — keep it
+  resolvable without an environment (a literal, a variable with a `default:`, or one set in
+  `vars/default.yml`), because `discover` takes no environment; a value only an environment sets
+  needs `--var` on `discover` itself.
 - **`providers:` variables resolve on `plan`, `apply`, `refresh`, `destroy` and `import <env>`,
   against the environment named on the command line** (infrata `PLAN.md` §12.1, amended
   2026-09-13; `import`'s own environment fixed in the same amendment, `internal/cli/context.go`'s

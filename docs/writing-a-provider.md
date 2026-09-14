@@ -152,7 +152,7 @@ says what the host does to the result.
 | `Provider.Create` | type, address, desired attributes | `(nil, nil)` becomes an error saying the resource may exist untracked (`adapter.go:173-175`). Otherwise rebuilt, with the address taken from the desired resource (`adapter.go:185-187`). |
 | `Provider.Update` | current and desired, each as type, address, provider ID, attributes | `(nil, nil)` becomes the same error (`adapter.go:200-202`). Otherwise rebuilt from current. |
 | `Provider.Delete` | type, address, provider ID, attributes | Error only; the host rebuilds nothing. Make deleting something already gone succeed, as the fake does (`internal/fake/provider.go:222-236`). Otherwise a resource someone removed by hand turns the next destroy into an error about a resource that no longer exists. |
-| `Provider.Discover` | the types wanted. The request also has a `Region` field, but today's host never sets it: it is always `""` (see [section 14](#regions-a-default-on-the-instance-overridden-per-resource)) | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
+| `Provider.Discover` | the types wanted — nothing else. There is no region field on the request ([section 14](#regions-a-default-on-the-instance-overridden-per-resource) explains why) | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
 | `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrata's `import` command, never by you (`internal/cli/import.go:166`). |
 | `Provider.ClassifyError` | *called in your process* | See [section 5](#5-errors-and-retries). |
 
@@ -1376,30 +1376,26 @@ infrata's environment.
 The requirement: one plugin instance works across many regions. The user sets a default region once
 and overrides it on any resource, including from a variable.
 
-**infrata:** first, what does **not** work.
+**infrata:** there is no region infrata gives you for free.
 
-- **`DiscoverRequest.Region` is never populated.** `pkg/provider/provider.go:64-67` and
-  `pkg/pluginproto/proto.go:179` declare it, but infrata's only construction of the request is
-  `provider.DiscoverRequest{Types: ask}` (`internal/discovery/walk.go:61`, in `Walk`). No command has
-  a region flag. It is always `""`, so don't implement against it.
-- **`${region}` is not a variable you can use.** `compiler.Options.Region` is declared
-  (`internal/compiler/resolved.go:45`) and read by `seedProcessVariables`
-  (`internal/compiler/compile.go:430`), but nothing ever assigns it. A project that writes `${region}`
-  fails to compile:
-
-  ```
-  Error: undefined variable "region"
-    at infra.yml:7:5
-
-    No variable of that name is in scope.
-
-    Suggested action:
-      Define it in variables.yml, or pass --var region=value.
-  ```
-
-  Use an ordinary declared variable, such as `aws_region`, instead. `PLAN.md` §12.1 ("Variables, so
-  an instance differs per environment") records both dead fields. It says Phase 3 will either add a
-  `--region` flag or remove them, and that the region model below needs neither.
+- **The discover request carries no region.** `provider.DiscoverRequest` and
+  `pluginproto.DiscoverParams` declare only `Types` (`pkg/provider/provider.go`,
+  `pkg/pluginproto/proto.go`) — there is no `Region` field to read. A plugin that scans several
+  regions takes them from its own instance `config:` (below); the host cannot supply them because it
+  does not know what a region IS for your cloud. (Building against v0.2.0: that release still
+  declares `DiscoverRequest.Region` / `DiscoverParams.Region`, but infrata's only construction of the
+  request, `provider.DiscoverRequest{Types: ask}` in `internal/discovery/walk.go:61`, never sets it,
+  so it reads `""` forever — don't implement against it there either. The field is gone on infrata
+  main past v0.2.0.)
+- **There is no ambient `region` (or `account`).** infrata seeds exactly two process variables into
+  every scope: `environment` and `project` (infrata `internal/variables/resolve.go`,
+  `ProcessVariables`; `PLAN.md` §6.3 and §12.1, amended 2026-09-13). `region` is an ordinary
+  variable name — declare it under `variables:` like any other, or use a differently-named one, as
+  the AWS example below does with `aws_region`. (Building against v0.2.0: `region` was reserved
+  there but never supplied, so even a project that declared its own `region` variable got
+  `undefined variable "region"` at the use site rather than `variable "region" is not set` at the
+  declaration, and `--var region=...` was refused outright. That reservation is gone on infrata
+  main past v0.2.0 — `region` behaves like any other variable name there.)
 
 What does work is **instance `defaults:`**. In `internal/compiler/schema.go:42-44`, compilation runs
 `applyInstanceDefaults`, then `applyDefaults` (the schema's own `Default`), then `checkRequired`.
@@ -1462,7 +1458,7 @@ Error: provider instance "fake" defaults "regoin", which no resource it serves a
   instead of a destroy-and-create (`PLAN.md` §15, §38; enforced at plan time in
   `internal/compiler/validate.go`).
 - **Discovery's regions come from `config:`**, for example `discover_regions: [us-east-1, eu-west-1]`.
-  A plugin never receives `defaults:`, and `DiscoverRequest.Region` is always empty, so its own
+  A plugin never receives `defaults:`, and the discover request carries no region field, so its own
   configuration is the only place that list can come from. **Keep it resolvable without an
   environment**, because `discover` takes none (below): a literal list, a variable with a
   `default:`, or one set in `vars/default.yml` all work; a variable only an environment sets needs
