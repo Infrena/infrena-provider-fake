@@ -1,10 +1,10 @@
 //go:build e2e
 
-// Package e2e runs a real infrata binary against a real infrata-plugin-fake binary.
+// Package e2e runs a real infrena binary against a real infrena-plugin-fake binary.
 //
-// Not part of `go test ./...`: it builds infrata from source, so it is slow and needs a
-// checkout. Run it with `go test -tags e2e -count=1 ./e2e/`. INFRATA_SRC points at the
-// checkout; the default is the sibling ../infrata that go.mod's replace already assumes.
+// Not part of `go test ./...`: it builds infrena from source, so it is slow and needs a
+// checkout. Run it with `go test -tags e2e -count=1 ./e2e/`. INFRENA_SRC points at the
+// checkout; the default is the sibling ../infrena that go.mod's replace already assumes.
 package e2e
 
 import (
@@ -16,12 +16,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/infrata/infrata/pkg/pluginmanifest"
+	"github.com/infrena/infrena/pkg/pluginmanifest"
+	"github.com/infrena/infrena/pkg/semver"
 )
 
 var (
-	infrataBin string // absolute path to the built infrata
-	pluginDir  string // directory holding the built infrata-plugin-fake
+	infrenaBin string // absolute path to the built infrena
+	pluginDir  string // directory holding the built infrena-plugin-fake
 	skipReason string // non-empty when the binaries could not be built
 )
 
@@ -33,20 +34,20 @@ func TestMain(m *testing.M) {
 	}
 	code := func() int {
 		defer os.RemoveAll(tmp)
-		src := os.Getenv("INFRATA_SRC")
+		src := os.Getenv("INFRENA_SRC")
 		if src == "" {
-			src = filepath.Join("..", "..", "infrata")
+			src = filepath.Join("..", "..", "infrena")
 		}
-		if _, err := os.Stat(filepath.Join(src, "cmd", "infrata")); err != nil {
-			skipReason = fmt.Sprintf("no infrata checkout at %s (set INFRATA_SRC): %v", src, err)
+		if _, err := os.Stat(filepath.Join(src, "cmd", "infrena")); err != nil {
+			skipReason = fmt.Sprintf("no infrena checkout at %s (set INFRENA_SRC): %v", src, err)
 			fmt.Fprintln(os.Stderr, "E2E SKIPPED: "+skipReason)
 			return m.Run()
 		}
-		infrataBin = filepath.Join(tmp, "infrata")
+		infrenaBin = filepath.Join(tmp, "infrena")
 		pluginDir = filepath.Join(tmp, "plugins")
 		for _, b := range []struct{ dir, out, pkg string }{
-			{src, infrataBin, "./cmd/infrata"},
-			{"..", filepath.Join(pluginDir, "infrata-plugin-fake"), "./cmd/infrata-plugin-fake"},
+			{src, infrenaBin, "./cmd/infrena"},
+			{"..", filepath.Join(pluginDir, "infrena-plugin-fake"), "./cmd/infrena-plugin-fake"},
 		} {
 			cmd := exec.Command("go", "build", "-o", b.out, b.pkg)
 			cmd.Dir = b.dir
@@ -85,19 +86,19 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
-// infrata runs the CLI in dir and returns combined output and the exit code.
-func infrata(t *testing.T, dir string, args ...string) (string, int) {
+// infrena runs the CLI in dir and returns combined output and the exit code.
+func infrena(t *testing.T, dir string, args ...string) (string, int) {
 	t.Helper()
-	cmd := exec.Command(infrataBin, append(args, "--plugin-dir", pluginDir)...)
+	cmd := exec.Command(infrenaBin, append(args, "--plugin-dir", pluginDir)...)
 	cmd.Dir = dir
 	// Only the plugin directory above may supply plugins: nothing from the developer's machine.
-	cmd.Env = append(os.Environ(), "INFRATA_PLUGIN_PATH=", "HOME="+t.TempDir())
+	cmd.Env = append(os.Environ(), "INFRENA_PLUGIN_PATH=", "HOME="+t.TempDir())
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		code = exitErr.ExitCode()
 	} else if err != nil {
-		t.Fatalf("running infrata %v: %v", args, err)
+		t.Fatalf("running infrena %v: %v", args, err)
 	}
 	return string(out), code
 }
@@ -105,13 +106,13 @@ func infrata(t *testing.T, dir string, args ...string) (string, int) {
 // expect runs a command and fails unless the exit code and every wanted substring match.
 func expect(t *testing.T, dir string, wantCode int, want []string, args ...string) string {
 	t.Helper()
-	out, code := infrata(t, dir, args...)
+	out, code := infrena(t, dir, args...)
 	if code != wantCode {
-		t.Fatalf("infrata %s: exit %d, want %d\n%s", strings.Join(args, " "), code, wantCode, out)
+		t.Fatalf("infrena %s: exit %d, want %d\n%s", strings.Join(args, " "), code, wantCode, out)
 	}
 	for _, w := range want {
 		if !strings.Contains(out, w) {
-			t.Fatalf("infrata %s: output lacks %q\n%s", strings.Join(args, " "), w, out)
+			t.Fatalf("infrena %s: output lacks %q\n%s", strings.Join(args, " "), w, out)
 		}
 	}
 	return out
@@ -121,7 +122,7 @@ func expect(t *testing.T, dir string, wantCode int, want []string, args ...strin
 func planOps(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	outPath := filepath.Join(t.TempDir(), "plan.json")
-	infrata(t, dir, "plan", "dev", "--output", outPath)
+	infrena(t, dir, "plan", "dev", "--output", outPath)
 	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("plan wrote no --output file: %v", err)
@@ -135,7 +136,7 @@ func planOps(t *testing.T, dir string) map[string]string {
 	ops := map[string]string{}
 	for _, op := range doc.Operations {
 		// operations[] lists every resource, "noop" included: the artifact describes
-		// the whole plan, not just its changes (infrata's plan.go, documented after
+		// the whole plan, not just its changes (infrena's plan.go, documented after
 		// this suite reported it as a candidate for confusion).
 		if op.Kind == "noop" {
 			continue
@@ -230,7 +231,7 @@ func TestTheWorkflow(t *testing.T) {
 		expect(t, dir, 2, []string{"1 to destroy"}, "plan", "dev")
 		expect(t, dir, 2, []string{"0 failed"}, "apply", "dev", "--auto-approve")
 	})
-	t.Run("discover and import adopt what infrata did not create", func(t *testing.T) {
+	t.Run("discover and import adopt what infrena did not create", func(t *testing.T) {
 		editCloud(t, cloud, func(doc map[string]any) {
 			resourcesOf(doc)["net-77"] = map[string]any{
 				"type": "fake.network", "attributes": map[string]any{"cidr": "172.16.0.0/12", "id": "net-77"},
@@ -280,20 +281,22 @@ func TestTwoInstancesKeepSeparateClouds(t *testing.T) {
 	}
 }
 
-// TestTheInfrataUnderTestSpeaksTheManifestsProtocol applies infrata PLAN.md §31.2's compatibility rules to the
-// infrata this suite built, reading what that build says it speaks from `infrata version --output`.
-// The release rule (AllowsInfrata) exempts only a host reporting 0.0.0. Since infrata has tags, a
+// TestTheInfrenaUnderTestSpeaksTheManifestsProtocol applies infrena PLAN.md §31.2's compatibility rules to the
+// infrena this suite built, reading what that build says it speaks from `infrena version --output`.
+// The release rule (AllowsInfrena) exempts only a host reporting 0.0.0. Since the engine has tags, a
 // plain `go build` of its checkout is not that: Go stamps the module version from git, so a clean
-// checkout AT v0.2.0 reports 0.2.0, and one commit past it reports 0.2.1-0.<time>-<hash>, which
-// compares as 0.2.1 (both measured 2026-09-13). So this checks plugin.yaml's `infrata:` floor
-// against the release CI's tag job builds its host from, and against main in the advisory job.
-func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
+// checkout AT a tag reports that version, and one commit past it reports a pseudo-version such as
+// 0.3.1-0.<time>-<hash>, which compares as 0.3.1 (measured 2026-09-13 at v0.2.0, and again
+// 2026-09-14 on infrena main e2be8bf, which is past the infrata-era v0.3.0 tag). So this checks
+// plugin.yaml's `infrena:` floor against the release CI's tag job builds its host from, and against
+// main in the advisory job — except while go.mod pins no renamed release; see below.
+func TestTheInfrenaUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 	if skipReason != "" {
 		t.Skip(skipReason)
 	}
 	out := filepath.Join(t.TempDir(), "version.json")
-	if b, err := exec.Command(infrataBin, "version", "--output", out).CombinedOutput(); err != nil {
-		t.Fatalf("infrata version --output: %v\n%s", err, b)
+	if b, err := exec.Command(infrenaBin, "version", "--output", out).CombinedOutput(); err != nil {
+		t.Fatalf("infrena version --output: %v\n%s", err, b)
 	}
 	data, err := os.ReadFile(out)
 	if err != nil {
@@ -307,7 +310,7 @@ func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 		} `json:"formats"`
 	}
 	if err := json.Unmarshal(data, &info); err != nil {
-		t.Fatalf("infrata version --output is not the expected JSON: %v\n%s", err, data)
+		t.Fatalf("infrena version --output is not the expected JSON: %v\n%s", err, data)
 	}
 	var protocols []int
 	for _, f := range info.Formats {
@@ -316,7 +319,7 @@ func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 		}
 	}
 	if len(protocols) == 0 {
-		t.Fatalf("infrata version --output lists no plugin protocol:\n%s", data)
+		t.Fatalf("infrena version --output lists no plugin protocol:\n%s", data)
 	}
 
 	raw, err := os.ReadFile(filepath.Join("..", "plugin.yaml"))
@@ -328,9 +331,55 @@ func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 		t.Fatalf("plugin.yaml: %v", err)
 	}
 	if !m.SpeaksProtocol(protocols) {
-		t.Errorf("plugin.yaml speaks protocol %v; infrata %s speaks %v", m.Protocol, info.Version, protocols)
+		t.Errorf("plugin.yaml speaks protocol %v; infrena %s speaks %v", m.Protocol, info.Version, protocols)
 	}
-	if !m.AllowsInfrata(info.Version) {
-		t.Errorf("plugin.yaml's infrata constraint %q does not allow infrata %s", m.Infrata, info.Version)
+	// The floor is checked against a host of the release go.mod pins. While go.mod requires the
+	// v0.0.0 placeholder (step 1 of the Infrata -> Infrena rename), no renamed release exists and
+	// the floor names the first one, 0.4.0, so a host built from infrena main cannot satisfy it:
+	// it reports a pseudo-version past v0.3.0, an infrata-era tag. What CAN be checked is that the
+	// host really is such an unreleased build, and that the floor refuses the last infrata release.
+	// Step 3 pins v0.4.0, and from then on the full check below applies.
+	if required := requiredInfrena(t); required == "v0.0.0" {
+		host, err := semver.Parse(info.Version)
+		if err != nil {
+			t.Fatalf("infrena version %q does not parse: %v", info.Version, err)
+		}
+		if host.Pre == "" {
+			t.Errorf("go.mod pins no renamed release (v0.0.0), but the host reports release %s; "+
+				"if a renamed release exists, bump go.mod's require to it", info.Version)
+		}
+		if m.AllowsInfrena("0.3.0") {
+			t.Errorf("plugin.yaml's infrena constraint %q allows 0.3.0, the last infrata-named release", m.Infrena)
+		}
+		t.Logf("go.mod requires v0.0.0: floor %q not checked against the unreleased host %s until a renamed release is pinned",
+			m.Infrena, info.Version)
+		return
 	}
+	if !m.AllowsInfrena(info.Version) {
+		t.Errorf("plugin.yaml's infrena constraint %q does not allow infrena %s", m.Infrena, info.Version)
+	}
+}
+
+// requiredInfrena reads the infrena version this module's go.mod requires, from the file alone.
+func requiredInfrena(t *testing.T) string {
+	t.Helper()
+	cmd := exec.Command("go", "mod", "edit", "-json")
+	cmd.Dir = ".."
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go mod edit -json: %v", err)
+	}
+	var mod struct {
+		Require []struct{ Path, Version string }
+	}
+	if err := json.Unmarshal(out, &mod); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range mod.Require {
+		if r.Path == "github.com/infrena/infrena" {
+			return r.Version
+		}
+	}
+	t.Fatal("go.mod does not require github.com/infrena/infrena")
+	return ""
 }

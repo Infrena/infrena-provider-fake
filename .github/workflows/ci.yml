@@ -2,16 +2,16 @@ name: CI
 
 # Two jobs, answering two different questions.
 #
-#   tag   "Does this plugin work with the infrata it declares?" Builds against the infrata RELEASE
+#   tag   "Does this plugin work with the infrena it declares?" Builds against the infrena RELEASE
 #         go.mod requires, fetched as a module with the replace dropped, and runs the e2e suite
 #         against a host built from that same tag. This is the job that gates a release.
 #
-#   main  "Has infrata main broken us?" Builds through go.mod's replace against a fresh checkout
-#         of infrata's main, as releases used to. Advisory: a red run here is an early warning
-#         about the NEXT infrata release, not a defect in this plugin against the one it declares.
+#   main  "Has infrena main broken us?" Builds through go.mod's replace against a fresh checkout
+#         of infrena's main, as releases used to. Advisory: a red run here is an early warning
+#         about the NEXT infrena release, not a defect in this plugin against the one it declares.
 #
-# A `replace => ../infrata` compiles whatever is on disk, so a green build through it proves
-# nothing about a real infrata release; that is why the gating job does not use it.
+# A `replace => ../infrena` compiles whatever is on disk, so a green build through it proves
+# nothing about a real infrena release; that is why the gating job does not use it.
 
 on:
   push:
@@ -26,50 +26,57 @@ permissions:
 
 jobs:
   tag:
-    name: against the required infrata release
+    name: against the required infrena release
     runs-on: ubuntu-latest
     env:
       # No silent toolchain upgrade: the build must use the Go setup-go installed.
       GOTOOLCHAIN: local
-      # infrata is private: fetch it with git directly, and skip the public proxy and checksum
+      # infrena is private: fetch it with git directly, and skip the public proxy and checksum
       # database, which cannot see it. go.sum's committed hashes are the integrity check instead.
-      GOPRIVATE: github.com/infrata/*
+      GOPRIVATE: github.com/infrena/*
     defaults:
       run:
-        working-directory: infrata-provider-fake
+        working-directory: infrena-provider-fake
     steps:
       - uses: actions/checkout@v7
         with:
-          path: infrata-provider-fake
+          path: infrena-provider-fake
 
       - uses: actions/setup-go@v7
         with:
           go-version: "1.27"
           # Checked out into a subdirectory; setup-go looks for go.sum at the workspace root by
           # default, which made the module cache restore fail.
-          cache-dependency-path: infrata-provider-fake/go.sum
+          cache-dependency-path: infrena-provider-fake/go.sum
 
       # go.mod is the single source of truth for the version: the checkout below and the module
       # the build fetches cannot disagree, because both come from this one read.
-      - name: Read the infrata release go.mod requires
-        id: infrata
-        run: echo "version=$(scripts/ci-use-infrata-tag version)" >> "$GITHUB_OUTPUT"
+      #
+      # The assignment is separate from the echo on purpose: a failing command substitution inside
+      # echo's argument does not fail the step, which would write an empty version and let the
+      # checkout below fall back to the default branch. While go.mod requires the v0.0.0 placeholder
+      # (no renamed release yet), this step fails here, naming the reason.
+      - name: Read the infrena release go.mod requires
+        id: infrena
+        run: |
+          version="$(scripts/ci-use-infrena-tag version)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # The e2e suite's HOST, built from source at the same tag. Deliberately NOT checked out at
-      # ../infrata: a leftover replace would then quietly resolve to it, and the build would never
+      # ../infrena: a leftover replace would then quietly resolve to it, and the build would never
       # prove it can fetch the tagged module.
       - uses: actions/checkout@v7
         with:
-          repository: infrata/infrata
-          ref: ${{ steps.infrata.outputs.version }}
-          path: infrata-host
-          # infrata is not public yet; a token with read access to it. Remove once it is.
-          token: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
+          repository: infrena/infrena
+          ref: ${{ steps.infrena.outputs.version }}
+          path: infrena-host
+          # infrena is not public yet; a token with read access to it. Remove once it is.
+          token: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
 
-      - name: Build against the tagged infrata module, not a working tree
+      - name: Build against the tagged infrena module, not a working tree
         env:
-          INFRATA_TOKEN: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
-        run: scripts/ci-use-infrata-tag use
+          INFRENA_TOKEN: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
+        run: scripts/ci-use-infrena-tag use
 
       - name: gofmt
         run: test -z "$(gofmt -l .)"
@@ -80,20 +87,20 @@ jobs:
       - name: test
         run: go test -count=1 ./...
 
-      - name: e2e against infrata ${{ steps.infrata.outputs.version }}
+      - name: e2e against infrena ${{ steps.infrena.outputs.version }}
         env:
-          INFRATA_SRC: ${{ github.workspace }}/infrata-host
+          INFRENA_SRC: ${{ github.workspace }}/infrena-host
         # The suite SKIPS, and so passes, when it cannot find its host. Here that is a failure.
         run: |
           set -euo pipefail
           go test -tags e2e -count=1 -v ./e2e/ 2>&1 | tee "$RUNNER_TEMP/e2e.log"
           if grep -q 'E2E SKIPPED' "$RUNNER_TEMP/e2e.log"; then
-            echo "::error::the e2e suite skipped instead of running against infrata-host"
+            echo "::error::the e2e suite skipped instead of running against infrena-host"
             exit 1
           fi
 
   main:
-    name: against infrata main (advisory)
+    name: against infrena main (advisory)
     runs-on: ubuntu-latest
     # Advisory: never fails the workflow, so it never blocks a merge or a release.
     continue-on-error: true
@@ -101,31 +108,31 @@ jobs:
       GOTOOLCHAIN: local
     defaults:
       run:
-        working-directory: infrata-provider-fake
+        working-directory: infrena-provider-fake
     steps:
-      # go.mod's replace names ../infrata, so both repositories are checked out side by side.
+      # go.mod's replace names ../infrena, so both repositories are checked out side by side.
       - uses: actions/checkout@v7
         with:
-          path: infrata-provider-fake
+          path: infrena-provider-fake
       - uses: actions/checkout@v7
         with:
-          repository: infrata/infrata
-          path: infrata
-          token: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
+          repository: infrena/infrena
+          path: infrena
+          token: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
 
       - uses: actions/setup-go@v7
         with:
           go-version: "1.27"
-          cache-dependency-path: infrata-provider-fake/go.sum
+          cache-dependency-path: infrena-provider-fake/go.sum
 
       - name: test
         run: go test -count=1 ./...
 
-      - name: e2e against infrata main
+      - name: e2e against infrena main
         run: |
           set -euo pipefail
           go test -tags e2e -count=1 -v ./e2e/ 2>&1 | tee "$RUNNER_TEMP/e2e.log"
           if grep -q 'E2E SKIPPED' "$RUNNER_TEMP/e2e.log"; then
-            echo "::error::the e2e suite skipped instead of running against ../infrata"
+            echo "::error::the e2e suite skipped instead of running against ../infrena"
             exit 1
           fi

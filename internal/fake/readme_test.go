@@ -22,7 +22,7 @@ func TestReadmeQuotesTheTestedExample(t *testing.T) {
 	}
 	for _, want := range []string{
 		DefaultCloudPath, string(RetryNotSafe), string(RetryConditional), string(RetrySafe), "latency_ms", "AGENT.md",
-		"infrata discover", "import dev fake.network.", "-tags e2e", "INFRATA_SRC", "plugin.yaml", "scripts/release-check", "0.0.0-dev",
+		"infrena discover", "import dev fake.network.", "-tags e2e", "INFRENA_SRC", "plugin.yaml", "scripts/release-check", "0.0.0-dev",
 	} {
 		if !strings.Contains(string(readme), want) {
 			t.Errorf("README.md never mentions %q", want)

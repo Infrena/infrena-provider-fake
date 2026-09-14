@@ -5,14 +5,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/infrata/infrata/pkg/address"
-	"github.com/infrata/infrata/pkg/plugintest"
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/resource"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/address"
+	"github.com/infrena/infrena/pkg/plugintest"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/value"
 )
 
-// openHost connects this plugin to infrata's own host over an in-memory pipe, so every call
+// openHost connects this plugin to infrena's own host over an in-memory pipe, so every call
 // is encoded, decoded and passed through the trust rules exactly as it is from a subprocess.
 func openHost(t *testing.T) (*plugintest.Host, string) {
 	t.Helper()

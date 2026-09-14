@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# ci-use-infrata-tag COMMAND: build against the infrata RELEASE go.mod requires, not a working tree.
+# ci-use-infrena-tag COMMAND: build against the infrena RELEASE go.mod requires, not a working tree.
 #
-# go.mod requires a tagged github.com/infrata/infrata and replaces it with ../infrata for local
+# go.mod requires a tagged github.com/infrena/infrena and replaces it with ../infrena for local
 # work. A replace compiles whatever is on disk, committed or not, so a green build through it
-# proves nothing about a real infrata release. CI therefore drops the replace and builds against
+# proves nothing about a real infrena release. CI therefore drops the replace and builds against
 # the tagged module, verified against the hashes committed in go.sum.
 #
-#   version  print the infrata version go.mod requires (vMAJOR.MINOR.PATCH), reading go.mod only
-#   check    fail unless go.sum carries infrata's hashes for that version (offline)
+#   version  print the infrena version go.mod requires (vMAJOR.MINOR.PATCH), reading go.mod only
+#   check    fail unless go.sum carries infrena's hashes for that version (offline)
 #   sum      fetch that version and add its hashes to go.sum (run locally after a bump or a tidy)
 #   use      check, set up git credentials, drop the replace, and confirm the tag is what resolves.
 #            MUTATES go.mod and ~/.gitconfig: for a CI runner, not a working copy.
@@ -16,7 +16,7 @@
 # disagree about how the tagged module is reached.
 #
 # Environment:
-#   INFRATA_TOKEN   `use` only: a token with read access to infrata/infrata, for Go's git fetch.
+#   INFRENA_TOKEN   `use` only: a token with read access to infrena/infrena, for Go's git fetch.
 #                   Required under GitHub Actions, where its absence means the secret did not arrive.
 #   FAKE_MODULE_DIR the directory holding go.mod and go.sum (default: the repository root). It
 #                   exists so a test can point `version` and `check` at a doctored copy.
@@ -24,39 +24,48 @@
 # Needs jq, for reading `go mod edit -json` (preinstalled on GitHub's ubuntu runners).
 set -euo pipefail
 
-module=github.com/infrata/infrata
-export GOPRIVATE="${GOPRIVATE:-github.com/infrata/*}"
+module=github.com/infrena/infrena
+export GOPRIVATE="${GOPRIVATE:-github.com/infrena/*}"
 
-cmd="${1:?usage: scripts/ci-use-infrata-tag version|check|sum|use}"
+cmd="${1:?usage: scripts/ci-use-infrena-tag version|check|sum|use}"
 # >/dev/null: with CDPATH set, cd prints the directory, and `version`'s stdout is captured by CI.
 cd "${FAKE_MODULE_DIR:-$(dirname "$0")/..}" >/dev/null
 
-# go mod edit -json reads go.mod alone: no module graph, so it works before ../infrata exists
+# go mod edit -json reads go.mod alone: no module graph, so it works before ../infrena exists
 # and does not care whether the replace is present. `go list -m` would load the replace target.
 required_version() {
   local v
   v="$(go mod edit -json | jq -r --arg m "$module" '.Require[]? | select(.Path == $m) | .Version')"
   if [[ -z "$v" ]]; then
-    echo "ci-use-infrata-tag: go.mod does not require $module" >&2
+    echo "ci-use-infrena-tag: go.mod does not require $module" >&2
+    return 1
+  fi
+  # v0.0.0 has the shape of a release but names none: it is go.mod's placeholder for "no renamed
+  # infrena release exists yet" (step 1 of the Infrata -> Infrena rename; see go.mod). There is no
+  # tag to check out, no module to fetch and no hash to pin, so every command that needs a version
+  # stops here, by name. CI's tag job is meant to be red until step 3 bumps the require.
+  if [[ "$v" == v0.0.0 ]]; then
+    echo "ci-use-infrena-tag: go.mod requires $module v0.0.0: no tagged release to test against yet." >&2
+    echo "v0.0.0 is the placeholder until the first renamed release (v0.4.0) is tagged. Bump go.mod's require to it, then run: scripts/ci-use-infrena-tag sum" >&2
     return 1
   fi
   if [[ ! "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "ci-use-infrata-tag: go.mod requires $module $v, which is not a release tag (vMAJOR.MINOR.PATCH)" >&2
+    echo "ci-use-infrena-tag: go.mod requires $module $v, which is not a release tag (vMAJOR.MINOR.PATCH)" >&2
     return 1
   fi
   printf '%s\n' "$v"
 }
 
 # check_sum asserts go.sum holds both hashes (the module zip's h1: and its /go.mod h1:) for every
-# module go.mod requires, direct and indirect — infrata at its required version among them.
+# module go.mod requires, direct and indirect — infrena at its required version among them.
 #
 # Why they must be committed: CI builds with the replace dropped under -mod=readonly, where a
 # missing hash is a build failure, and a hash CI generated for itself would verify nothing.
-# Why they go missing: while the replace is present, `go mod tidy` drops infrata's hashes (it
-# builds from ../infrata, so it has no use for them), and may drop others that only the tagged
+# Why they go missing: while the replace is present, `go mod tidy` drops infrena's hashes (it
+# builds from ../infrena, so it has no use for them), and may drop others that only the tagged
 # module's graph needs.
 #
-# Not the full module graph: deriving that needs infrata's go.mod at the tag, which means network
+# Not the full module graph: deriving that needs infrena's go.mod at the tag, which means network
 # or a warm module cache, and a check that passes or fails by cache state is worse than a narrower
 # one that is always the same. go.mod's require block is what tidy maintains, so it covers the
 # modules a build actually loads; anything beyond it still fails CI loudly as a missing go.sum entry.
@@ -67,14 +76,14 @@ check_sum() {
     grep -q "^$path $ver/go.mod h1:" go.sum 2>/dev/null || missing+=("$path $ver/go.mod")
   done < <(go mod edit -json | jq -r '.Require[]? | "\(.Path) \(.Version)"')
   if ((${#missing[@]})); then
-    echo "ci-use-infrata-tag: go.sum is missing hashes a build without the replace needs:" >&2
+    echo "ci-use-infrena-tag: go.sum is missing hashes a build without the replace needs:" >&2
     printf '  %s\n' "${missing[@]}" >&2
     cat >&2 <<'EOF'
 `go mod tidy` run while go.mod's replace is present strips these, and CI (which drops the replace
 and builds under -mod=readonly) then fails with "missing go.sum entry". Restore them with:
-  scripts/ci-use-infrata-tag sum
+  scripts/ci-use-infrena-tag sum
 which, on a scratch copy of go.mod so the real replace is never touched, drops the replace and runs
-`GOPRIVATE=github.com/infrata/* go mod tidy`, then copies the resulting go.sum back.
+`GOPRIVATE=github.com/infrena/* go mod tidy`, then copies the resulting go.sum back.
 EOF
     return 1
   fi
@@ -87,7 +96,7 @@ case "$cmd" in
   check)
     v="$(required_version)"
     check_sum
-    echo "ci-use-infrata-tag: go.sum pins $module $v"
+    echo "ci-use-infrena-tag: go.sum pins $module $v"
     ;;
   sum)
     # `go mod tidy` against a COPY of go.mod with the replace dropped (-modfile, which reads and
@@ -104,24 +113,24 @@ case "$cmd" in
     # Tidy may also change requirements, which would mean go.mod has drifted from what the tagged
     # module needs. That is a decision for a person, not something to write back silently.
     if [[ "$(go mod edit -json -modfile="$work/norep.mod" | jq -c .Require)" != "$(go mod edit -json | jq -c .Require)" ]]; then
-      echo "ci-use-infrata-tag: without the replace, go mod tidy wants different requirements than go.mod has:" >&2
+      echo "ci-use-infrena-tag: without the replace, go mod tidy wants different requirements than go.mod has:" >&2
       diff <(go mod edit -print | sed -n '/^require/,/^)/p') <(sed -n '/^require/,/^)/p' "$work/norep.mod") >&2 || true
       echo "go.sum was not changed. Reconcile go.mod's require block with $module $v first." >&2
       exit 1
     fi
     cp "$work/norep.sum" go.sum
     check_sum
-    echo "ci-use-infrata-tag: go.sum restored to the full set a build without the replace needs ($module $v)"
+    echo "ci-use-infrena-tag: go.sum restored to the full set a build without the replace needs ($module $v)"
     ;;
   use)
     v="$(required_version)"
     check_sum
-    if [[ -n "${INFRATA_TOKEN:-}" ]]; then
+    if [[ -n "${INFRENA_TOKEN:-}" ]]; then
       # The token goes through the environment and into git's config, never onto a command line
       # that is echoed. Go fetches a GOPRIVATE module with plain git over https.
-      git config --global url."https://x-access-token:${INFRATA_TOKEN}@github.com/infrata/".insteadOf "https://github.com/infrata/"
+      git config --global url."https://x-access-token:${INFRENA_TOKEN}@github.com/infrena/".insteadOf "https://github.com/infrena/"
     elif [[ "${GITHUB_ACTIONS:-}" == true ]]; then
-      echo "ci-use-infrata-tag: INFRATA_TOKEN is empty. A reusable workflow gets no secrets unless its caller passes them (secrets: inherit)." >&2
+      echo "ci-use-infrena-tag: INFRENA_TOKEN is empty. A reusable workflow gets no secrets unless its caller passes them (secrets: inherit)." >&2
       exit 1
     fi
     go mod edit -dropreplace="$module"
@@ -129,13 +138,13 @@ case "$cmd" in
     # the recorded hash fails here, rather than being silently re-recorded.
     resolved="$(go list -m -f '{{.Version}}{{with .Replace}} => {{.Path}}{{end}}' "$module")"
     if [[ "$resolved" != "$v" ]]; then
-      echo "ci-use-infrata-tag: $module resolves to '$resolved', not the tagged $v" >&2
+      echo "ci-use-infrena-tag: $module resolves to '$resolved', not the tagged $v" >&2
       exit 1
     fi
-    echo "ci-use-infrata-tag: building against $module $v, fetched as a module (replace dropped)"
+    echo "ci-use-infrena-tag: building against $module $v, fetched as a module (replace dropped)"
     ;;
   *)
-    echo "ci-use-infrata-tag: unknown command '$cmd' (want version, check, sum or use)" >&2
+    echo "ci-use-infrena-tag: unknown command '$cmd' (want version, check, sum or use)" >&2
     exit 1
     ;;
 esac

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/value"
 )
 
 // TestCreateDoesNotReplaceAHandAddedResource. Hand-editing the cloud file is supported, so a

@@ -3,8 +3,8 @@ package fake
 import (
 	"fmt"
 
-	"github.com/infrata/infrata/pkg/resource"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/value"
 )
 
 // stateOf converts a cloud object into what a plugin reports: its type, its ID and its

@@ -1,12 +1,12 @@
 name: Release
 
-# Triggered by a version tag. Mirrors infrata's own release workflow: one runner cross-compiles
+# Triggered by a version tag. Mirrors infrena's own release workflow: one runner cross-compiles
 # every platform, the version is stamped by -ldflags and nowhere else, and nothing is published
-# unless the tag, plugin.yaml's version and the binary's reported version agree (infrata PLAN.md §31.2).
+# unless the tag, plugin.yaml's version and the binary's reported version agree (infrena PLAN.md §31.2).
 #
-# CI tests against the infrata release this plugin declares (go.mod's require, which plugin.yaml's
-# `infrata:` floor matches), and the archives are built against that same tagged module. ci.yml
-# also runs an advisory job against infrata main; it reports, but does not gate, a release.
+# CI tests against the infrena release this plugin declares (go.mod's require, which plugin.yaml's
+# `infrena:` floor matches), and the archives are built against that same tagged module. ci.yml
+# also runs an advisory job against infrena main; it reports, but does not gate, a release.
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
     # REQUIRED. A reusable workflow receives no secrets unless the caller passes them, and without
-    # INFRATA_CHECKOUT_TOKEN every infrata fetch fails with an empty token.
+    # INFRENA_CHECKOUT_TOKEN every infrena fetch fails with an empty token.
     secrets: inherit
 
   release:
@@ -29,7 +29,7 @@ jobs:
       contents: write # to create the release
     env:
       GOTOOLCHAIN: local
-      GOPRIVATE: github.com/infrata/*
+      GOPRIVATE: github.com/infrena/*
     steps:
       - uses: actions/checkout@v7
 
@@ -37,12 +37,12 @@ jobs:
         with:
           go-version: "1.27"
 
-      # release-check and build-release both compile against infrata, so they get the same tagged
+      # release-check and build-release both compile against infrena, so they get the same tagged
       # module ci.yml tested, through the same script, rather than a second copy of its setup.
-      - name: Build against the tagged infrata module, not a working tree
+      - name: Build against the tagged infrena module, not a working tree
         env:
-          INFRATA_TOKEN: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
-        run: scripts/ci-use-infrata-tag use
+          INFRENA_TOKEN: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
+        run: scripts/ci-use-infrena-tag use
 
       - name: Verify the tag, the manifest and the binary agree
         run: scripts/release-check "$GITHUB_REF_NAME"

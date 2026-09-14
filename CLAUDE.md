@@ -7,27 +7,27 @@ repository.
 
 ## What this repository is
 
-`infrata-provider-fake` is the **fake provider for [infrata](https://github.com/infrata/infrata),
-distributed as a plugin binary**: `infrata-plugin-fake`.
+`infrena-provider-fake` is the **fake provider for [infrena](https://github.com/infrena/infrena),
+distributed as a plugin binary**: `infrena-plugin-fake`.
 
-Infrata is a declarative infrastructure CLI. A provider plugin is a separate executable that
-infrata launches as a child process and talks to over stdin/stdout in newline-delimited JSON. This
+Infrena is a declarative infrastructure CLI. A provider plugin is a separate executable that
+infrena launches as a child process and talks to over stdin/stdout in newline-delimited JSON. This
 repository builds one.
 
 **Nothing here touches a network.** The fake provider's "cloud" is a hand-editable JSON file on
-disk. That is the whole point of it: it makes infrata's entire engine — planning, applying, drift
+disk. That is the whole point of it: it makes infrena's entire engine — planning, applying, drift
 detection, import, dependency ordering, failure injection — testable without cloud credentials.
 
 ### Two jobs, and the second one is why this repo exists separately
 
-1. **Replace the in-process fake provider.** Infrata currently carries `providers/test/` inside its
+1. **Replace the in-process fake provider.** Infrena currently carries `providers/test/` inside its
    own module, wired in by direct import. This repository replaces it with a real plugin.
 2. **Be the worked example every plugin author reads.** It is the only plugin whose source anyone
    can study, so it is also the reference implementation and the documentation. A third-party author
-   building `infrata-plugin-hetzner` should be able to follow this repository and succeed.
+   building `infrena-plugin-hetzner` should be able to follow this repository and succeed.
 
-The second job is the reason the fake provider moved out of infrata's tree rather than becoming
-`cmd/infrata-plugin-test/` inside it. A plugin that lives in the engine's own module can quietly
+The second job is the reason the fake provider moved out of infrena's tree rather than becoming
+`cmd/infrena-plugin-test/` inside it. A plugin that lives in the engine's own module can quietly
 depend on something an external author cannot have — an internal package, a test helper, a shared
 fixture — and nobody would notice until the first outside plugin failed. Here, if it compiles, the
 dependency is one an outside author has too.
@@ -36,14 +36,31 @@ dependency is one an outside author has too.
 
 **Built and passing.** The plugin (`internal/fake/`: cloud file, schemas, CRUD with attribute
 removal, discover/import, failure/latency injection, a per-file lock, plugin configuration) and its
-binary (`cmd/infrata-plugin-fake/`) are complete and documented, with a version-gated release
-workflow that has published v0.1.0, v0.1.1 and v0.2.0 (the first built against infrata v0.3.0 and
-speaking protocol 2, and the first cut through ci.yml's gate). CI (`.github/workflows/ci.yml`, on push to `main`,
-pull requests, and called by `release.yml`) builds against the infrata RELEASE `go.mod` requires
-(v0.3.0) in its gating `tag` job, and against infrata `main` in an advisory `main` job. Its
-`INFRATA_CHECKOUT_TOKEN` secret, which lets it check out and fetch the private `infrata/infrata`
-repository, is configured, and ci.yml's first GitHub run (34797363934) was green on both jobs; the
-release path's `secrets: inherit` was proven by the v0.2.0 release run (34848477674). The implementation followed
+binary (`cmd/infrena-plugin-fake/`) are complete and documented, with a version-gated release
+workflow that has published v0.1.0, v0.1.1 and v0.2.0. Those three predate the rename and carry the
+old names: v0.2.0 was built against infrata v0.3.0, speaks protocol 2, is named
+`infrata-plugin-fake`, was the first cut through ci.yml's gate, and pairs only with infrata ≤ v0.3.0.
+
+**Mid-rename, step 1 of 3 (2026-09-14).** Infrata was renamed Infrena (a legal name collision). This
+repository has renamed everything (module `github.com/infrena/infrena-provider-fake`, binary
+`infrena-plugin-fake`, `INFRENA_*` variables, `manifest: 2` with `infrena: ">= 0.4.0"`) against
+infrena `main`, which already has module `github.com/infrena/infrena`. No renamed infrena release
+exists yet — tags v0.1.0–v0.3.0 declare the old module path — so `go.mod` requires the placeholder
+`github.com/infrena/infrena v0.0.0`, builds only through the `replace`, and go.sum carries no infrena
+hashes. Consequences, all deliberate: `scripts/ci-use-infrena-tag version|check|sum|use` refuse
+v0.0.0 by name, so ci.yml's gating `tag` job is RED until step 3;
+`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` skips with a message saying why
+(`TestTheGoSumGuardSkipsOnlyTheUnpinnedPlaceholder` proves it skips nothing else); and the e2e floor
+check only asserts that the host is an unreleased build and that the floor refuses 0.3.0. Step 2 is
+the engine tagging v0.4.0 (its CI builds this repository's `cmd/infrena-plugin-fake` from a sibling
+checkout); step 3 bumps `go.mod` to v0.4.0 and runs `scripts/ci-use-infrena-tag sum`, which ends all
+three. The new `INFRENA_CHECKOUT_TOKEN` secret is James's to set; the old `INFRATA_CHECKOUT_TOKEN`
+proved the path before the rename (ci.yml's first GitHub run 34797363934 green on both jobs; the
+release path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
+
+CI (`.github/workflows/ci.yml`, on push to `main`, pull requests, and called by `release.yml`) builds
+against the infrena RELEASE `go.mod` requires in its gating `tag` job, and against infrena `main` in
+an advisory `main` job. The implementation followed
 `docs/plans/2026-09-13-port-fake-provider.md`; read that plan (including its verification log and
 the ledger it summarizes) before touching this repository's design, rather than re-planning from
 scratch.
@@ -53,66 +70,73 @@ Two test suites, both green with `-count=1`:
 ```bash
 go test -count=1 ./...                    # the plain suite: unit + pkg/plugintest protocol
                                            # tests, plus scripts/ (release-check / build-release)
-go test -tags e2e -count=1 -v ./e2e/      # compliance suite against a real infrata binary
+go test -tags e2e -count=1 -v ./e2e/      # compliance suite against a real infrena binary
 ```
 
 `go test -count=1 ./...` already covers `scripts/` — there is no separate third layer to run for
-it. The `-tags e2e` suite builds `infrata` from a sibling checkout — `$INFRATA_SRC`, default
-`../infrata` — and drives it as a subprocess; it needs that checkout present and buildable, and is
-slower than the plain suite, so it is not part of the default `go test ./...` run. (`$INFRATA_SRC`
-only chooses which infrata the CLI is built from for this suite — locally the plugin itself still
-compiles against `../infrata` through `go.mod`'s `replace`, so pointing `INFRATA_SRC` at a different
-checkout pairs a host built from one infrata with an SDK compiled against another. CI's tag job avoids
+it. The `-tags e2e` suite builds `infrena` from a sibling checkout — `$INFRENA_SRC`, default
+`../infrena` — and drives it as a subprocess; it needs that checkout present and buildable, and is
+slower than the plain suite, so it is not part of the default `go test ./...` run. (`$INFRENA_SRC`
+only chooses which infrena the CLI is built from for this suite — locally the plugin itself still
+compiles against `../infrena` through `go.mod`'s `replace`, so pointing `INFRENA_SRC` at a different
+checkout pairs a host built from one infrena with an SDK compiled against another. CI's tag job avoids
 that: it drops the replace and builds the host from the same tag.)
 
-Release plumbing: `plugin.yaml` (infrata `PLAN.md` §31.2; its `infrata: ">= 0.3.0"` matches `go.mod`'s
-require and is not enforced at runtime yet, and its `protocol: [2]` is exactly the `pluginproto.Version`
+Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.4.0"` is
+the first renamed release, which `go.mod`'s require will match from step 3 and which is not enforced
+at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.3.x and admits 0.4.0 — and its
+`protocol: [2]` is exactly the `pluginproto.Version`
 that require's SDK speaks — the amended §31.2 defines `protocol:` as what this release's binary
 speaks, so it changes in the same commit as the require, and `internal/fake/manifest_test.go` and
 `scripts/release-check` both refuse a mismatch), `scripts/release-check`, `scripts/build-release`,
-`scripts/ci-use-infrata-tag`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
+`scripts/ci-use-infrena-tag`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
 
-**go.sum carries infrata's hashes on purpose.** CI's tag job builds under `-mod=readonly` with the
-replace dropped, so it needs them, and a local `go mod tidy` (replace present) strips them.
+**go.sum carries infrena's hashes on purpose** (from step 3; none exist for the v0.0.0 placeholder,
+and the infrata-path lines were removed in the rename). CI's tag job builds under `-mod=readonly`
+with the replace dropped, so it needs them, and a local `go mod tidy` (replace present) strips them.
 `TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` fails when that happens; restore with
-`scripts/ci-use-infrata-tag sum`, and run the same after bumping the infrata require (then raise
-`plugin.yaml`'s `infrata:` floor to match, and set its `protocol:` to that release's
+`scripts/ci-use-infrena-tag sum`, and run the same after bumping the infrena require (then raise
+`plugin.yaml`'s `infrena:` floor to match, and set its `protocol:` to that release's
 `pluginproto.Version`). `Version` defaults to `"0.0.0-dev"` and is
 stamped only by `-ldflags` at release (Ruling R9), so an unstamped build cannot silently satisfy a
 project's `plugins:` constraint or the release gate.
 
 **Known limits:**
-- The `test.*` → `fake.*` rename (D1) is migrated by infrata, not here: state version 1 → 2
-  (infrata `internal/state/migrations.go`) rewrites the types and the implicit `test` instance
+- The `test.*` → `fake.*` rename (D1) is migrated by infrena, not here: state version 1 → 2
+  (infrena `internal/state/migrations.go`) rewrites the types and the implicit `test` instance
   name. This plugin itself carries no migration code. Renaming the type prefix from `test.` to
-  `fake.` would otherwise break any project or state file using infrata's old in-tree provider,
-  which infrata no longer ships.
+  `fake.` would otherwise break any project or state file using infrena's old in-tree provider,
+  which infrena no longer ships.
 - Symlinked paths to the same cloud file are not unified into one lock (D5) — two different paths
   naming the same file on disk can still race.
-- `go.mod` carries `replace github.com/infrata/infrata => ../infrata` (D7) for local work, and will for
-  as long as infrata stays private (until it is feature complete, infrata PLAN.md §31.1); a sibling
-  checkout named `infrata` — what `git clone` creates — is required to build or test locally, and a
+- `go.mod` carries `replace github.com/infrena/infrena => ../infrena` (D7) for local work, and will for
+  as long as infrena stays private (until it is feature complete, infrena PLAN.md §31.1); a sibling
+  checkout named `infrena` — what `git clone` creates — is required to build or test locally, and a
   local result reflects that checkout, not the required release. CI drops the replace
-  (`scripts/ci-use-infrata-tag use`), which needs `GOPRIVATE`, the token, and the committed go.sum hashes.
-- Because infrata is private, `GOPRIVATE` also bypasses the checksum database: the committed go.sum
-  hash is the only thing that would notice the v0.3.0 tag being moved.
+  (`scripts/ci-use-infrena-tag use`), which needs `GOPRIVATE`, the token, and the committed go.sum hashes.
+- Until step 3 of the rename, `go.mod` requires the `v0.0.0` placeholder: there is no tagged
+  infrena to build against, CI's gating `tag` job fails at its first step by design, and nothing
+  but the `replace` builds this module. Nothing here depends on the old `../infrata` path or names
+  (verified with fresh clones and no `infrata` directory present).
+- Because infrena is private, `GOPRIVATE` also bypasses the checksum database: the committed go.sum
+  hash is the only thing that would notice a pinned tag being moved.
 
 ## Where the contract lives
 
-The protocol and the interfaces are defined in the infrata repository, not here:
+The protocol and the interfaces are defined in the infrena repository, not here:
 
 | What | Where | Read it for |
 | --- | --- | --- |
-| `PLAN.md` §31.1 | infrata repo | the design, the alternatives rejected, and what the host refuses to trust a plugin with |
-| `PLAN.md` §31.2 | infrata repo | **the agreed `plugin.yaml` manifest** — the schema this repository ships, and why it is read at the git tag |
-| `PLAN.md` §61 | infrata repo | versioning: the product semver, the format versions, and why the config language is not versioned |
-| `pkg/pluginproto` | infrata repo | the wire messages and the protocol version |
-| `pkg/pluginsdk` | infrata repo | `Main(p)` — the whole of a plugin's `main()` |
-| `pkg/provider` | infrata repo | `Plugin` and `Provider`, the two interfaces to implement |
-| `pkg/schema` | infrata repo | how to describe resource types |
-| `pkg/value` | infrata repo | the value model, including per-leaf sensitivity |
-| `pkg/semver` | infrata repo | the version-constraint syntax, for validating this plugin's own `infrata:` field |
-| `pkg/plugintest` | infrata repo | the in-process harness this repository's protocol tests use |
+| `PLAN.md` §31.1 | infrena repo | the design, the alternatives rejected, and what the host refuses to trust a plugin with |
+| `PLAN.md` §31.2 | infrena repo | **the agreed `plugin.yaml` manifest** — the schema this repository ships, and why it is read at the git tag |
+| `PLAN.md` §61 | infrena repo | versioning: the product semver, the format versions, and why the config language is not versioned |
+| `pkg/pluginproto` | infrena repo | the wire messages and the protocol version |
+| `pkg/pluginsdk` | infrena repo | `Main(p)` — the whole of a plugin's `main()` |
+| `pkg/provider` | infrena repo | `Plugin` and `Provider`, the two interfaces to implement |
+| `pkg/schema` | infrena repo | how to describe resource types |
+| `pkg/value` | infrena repo | the value model, including per-leaf sensitivity |
+| `pkg/semver` | infrena repo | the version-constraint syntax, for validating this plugin's own `infrena:` field |
+| `pkg/plugintest` | infrena repo | the in-process harness this repository's protocol tests use |
 
 **Read `PLAN.md` §31.1 and §31.2 before writing any code.** It is the specification this repository
 implements, and it records decisions with their reasoning — including several things deliberately
@@ -123,20 +147,20 @@ second. It holds the API surface, the rules, and the failure modes.
 
 ## Stack and commands
 
-Go 1.27. Infrata's `go.mod` declares that floor as of 2026-09-13, so this module must declare it
-too or it will not build against `../infrata`. The error Go gives for a too-low `go` directive DOES
+Go 1.27. Infrena's `go.mod` declares that floor as of 2026-09-13, so this module must declare it
+too or it will not build against `../infrena`. The error Go gives for a too-low `go` directive DOES
 name the module whose requirement it is (`go: <module>@<version> requires go >= X (running go Y;
 …)`) — with `GOTOOLCHAIN=auto` (this repo's default), Go instead fetches a newer toolchain
 silently; the named-module error only surfaces under a pinned `GOTOOLCHAIN=local` on a too-old
 toolchain.
 
-**Standard library plus `github.com/infrata/infrata` only.** The protocol deliberately adds no
+**Standard library plus `github.com/infrena/infrena` only.** The protocol deliberately adds no
 third-party dependency, and a fake provider that needed one would be evidence of a problem in the
 design rather than in this repository. `go.mod`'s `gopkg.in/yaml.v3 // indirect` arrives through
-infrata's `pkg/pluginmanifest`, not through anything imported here.
+infrena's `pkg/pluginmanifest`, not through anything imported here.
 
 ```bash
-go build ./cmd/infrata-plugin-fake   # build the plugin
+go build ./cmd/infrena-plugin-fake   # build the plugin
 go test -count=1 ./...               # the suite; -count=1 is mandatory, cached results hide fixture edits
 go vet ./...
 gofmt -l .
@@ -147,8 +171,8 @@ gofmt -l .
 Already done. `docs/plans/2026-09-13-port-fake-provider.md` records the decisions (why `fake.*` not
 `test.*`, why `Update` deletes attributes the desired state omits, why the lock is per cloud file,
 why the manifest and release gate exist), the behaviour ledger of what ported unchanged, changed, or
-was deliberately dropped from infrata's in-tree `providers/test`, and a verification log of every
-factual claim checked against infrata's code — including the ones that came back different from
+was deliberately dropped from infrena's in-tree `providers/test`, and a verification log of every
+factual claim checked against infrena's code — including the ones that came back different from
 what was assumed. Read it before planning new work here, rather than re-deriving any of this from
 scratch; the sections below on "Documentation this repository must ship" and "Rules for code in this
 repository" still apply to any change.
@@ -162,7 +186,7 @@ These are deliverables, not follow-ups. The repository is not finished without t
 For someone who has just found this repository. It must cover:
 
 - what the fake provider is for, in two sentences, including "no network, no credentials"
-- how to build it and where to put the binary so infrata finds it (the search path is in
+- how to build it and where to put the binary so infrena finds it (the search path is in
   `AGENT.md`)
 - a copy-pasteable `infra.yml` that works, and the three commands that exercise it
 - the shape of the cloud file, and the fact that editing it by hand is a supported thing to do —
@@ -179,7 +203,7 @@ README, and the example here is the first thing anyone copies.
 Already written. **Keep it true.** It documents the plugin API, and this repository is the thing
 that proves the documentation works. If you discover while building that `AGENT.md` is wrong,
 incomplete, or describes something more awkward than it needs to be, fix `AGENT.md` — and consider
-whether the awkwardness is really a defect in infrata's SDK that should be fixed there instead.
+whether the awkwardness is really a defect in infrena's SDK that should be fixed there instead.
 
 ### `docs/writing-a-provider.md`
 
@@ -192,14 +216,14 @@ condensed reference. It must cover at least:
 - `Requirements`, and what missing-dependency detection gives a user
 - error classification, and the difference between the three retryability levels in terms of what
   the executor will do
-- how to test a plugin without a cloud account, including what infrata's own `pkg/plugintest`
+- how to test a plugin without a cloud account, including what infrena's own `pkg/plugintest`
   (`Open`/`Configure`) makes possible
 - credentials: how a plugin should take them, and why it must never log them
 - the things the host enforces so a plugin does not have to, so an author does not waste effort
   reimplementing them
 - how to version and release a plugin, and how a project constrains a version with `plugins:`
 
-Write it for a competent Go developer who knows their cloud's API and knows nothing about infrata.
+Write it for a competent Go developer who knows their cloud's API and knows nothing about infrena.
 
 ## Rules for code in this repository
 
@@ -207,7 +231,7 @@ These are the ones that are easy to get wrong and expensive to get wrong.
 
 - **stdout is the protocol. Never print to it.** One stray `fmt.Println` corrupts the stream and
   every subsequent message; the symptom is an unrelated parse error much later. Log to stderr,
-  which infrata prefixes with the plugin name and shows under `--verbose`. The SDK redirects
+  which infrena prefixes with the plugin name and shows under `--verbose`. The SDK redirects
   `os.Stdout` to stderr to catch this, but do not rely on it — a direct write to fd 1 still
   escapes.
 - **A schema is data, and holds no functions.** It has to survive a pipe. `Default` is a datum, not

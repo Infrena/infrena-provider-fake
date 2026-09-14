@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/resource"
-	"github.com/infrata/infrata/pkg/schema"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/schema"
 )
 
 // PluginName is this plugin's name: the binary's suffix, what `plugin:` names, and the
@@ -275,7 +275,7 @@ func (p *Provider) Discover(ctx context.Context, req provider.DiscoverRequest) (
 // The type is CHECKED against what the cloud holds, not trusted: `import fake.network db-9`
 // naming a real database would otherwise write state claiming a database is a network, and
 // the next plan would propose replacing real infrastructure to settle a disagreement the tool
-// invented. No address is assigned — naming is infrata's job.
+// invented. No address is assigned — naming is infrena's job.
 func (p *Provider) Import(ctx context.Context, resourceType, id string) (*resource.ResourceState, error) {
 	if err := p.delay(ctx); err != nil {
 		return nil, err

@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/schema"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/schema"
+	"github.com/infrena/infrena/pkg/value"
 )
 
 // Version is reported in the handshake and checked against a project's `plugins:`
@@ -17,7 +17,7 @@ import (
 // build claiming to be a release is how a bug report turns into an afternoon, and a
 // default equal to plugin.yaml's version would let a broken -ldflags path pass the
 // release check. scripts/build-release stamps it:
-// -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=1.2.3".
+// -ldflags "-X github.com/infrena/infrena-provider-fake/internal/fake.Version=1.2.3".
 var Version = "0.0.0-dev"
 
 // Plugin is the fake provider before configuration: its schemas, and how to build one
@@ -63,7 +63,7 @@ func (pl *Plugin) New(cfg provider.Config) (provider.Provider, error) {
 		path = text
 	}
 	// Relative to the PROJECT, which the host supplies — not to this process's working
-	// directory, which is inherited from infrata and is not where the project is.
+	// directory, which is inherited from infrena and is not where the project is.
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(cfg.ProjectDir, path)
 	}

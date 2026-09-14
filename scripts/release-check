@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # release-check TAG: refuse to release unless the git tag, plugin.yaml's version and the version
 # the built binary reports all agree, and plugin.yaml's protocol: is exactly the protocol version
-# the binary's handshake announces (infrata PLAN.md §31.2). The manifest is authoritative and the
+# the binary's handshake announces (infrena PLAN.md §31.2). The manifest is authoritative and the
 # binary secondary; this check is what blocks a release where they disagree.
 #
 # FAKE_VERSION_SYMBOL overrides the -ldflags -X target. It exists so a test can simulate the
@@ -32,15 +32,15 @@ if [[ "$manifest_version" != "$version" ]]; then
   exit 1
 fi
 
-symbol="${FAKE_VERSION_SYMBOL:-github.com/infrata/infrata-provider-fake/internal/fake.Version}"
+symbol="${FAKE_VERSION_SYMBOL:-github.com/infrena/infrena-provider-fake/internal/fake.Version}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrata-plugin-fake" ./cmd/infrata-plugin-fake
+CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrena-plugin-fake" ./cmd/infrena-plugin-fake
 
 # The binary refuses to start without the host's cookie. With it and an empty stdin, it writes
 # its handshake {"protocol","name","version"} and exits. Captured whole, not piped to head,
 # so pipefail cannot turn an early-closed pipe into a false failure.
-out="$(INFRATA_PLUGIN_COOKIE=release-check "$work/infrata-plugin-fake" </dev/null 2>/dev/null)"
+out="$(INFRENA_PLUGIN_COOKIE=release-check "$work/infrena-plugin-fake" </dev/null 2>/dev/null)"
 handshake="${out%%$'\n'*}"
 reported="$(printf '%s' "$handshake" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 if [[ "$reported" != "$version" ]]; then
@@ -60,7 +60,7 @@ if [[ -z "$spoken" ]]; then
 fi
 if [[ "$manifest_protocol" != "[$spoken]" ]]; then
   echo "release-check: $manifest says protocol: ${manifest_protocol:-<missing>}, but the binary speaks protocol $spoken, so it must say [$spoken]" >&2
-  echo "protocol: changes in the same commit as go.mod's infrata require (infrata PLAN.md §31.2)." >&2
+  echo "protocol: changes in the same commit as go.mod's infrena require (infrena PLAN.md §31.2)." >&2
   exit 1
 fi
 echo "release-check: tag, plugin.yaml and binary all say $version, and speak protocol [$spoken]"

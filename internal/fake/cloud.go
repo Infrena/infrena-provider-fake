@@ -1,4 +1,4 @@
-// Package fake implements infrata's fake provider: a provider whose "cloud" is a
+// Package fake implements infrena's fake provider: a provider whose "cloud" is a
 // hand-editable JSON file, so drift can be induced by a person or a test with equal ease.
 package fake
 
@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/infrata/infrata/pkg/provider"
+	"github.com/infrena/infrena/pkg/provider"
 )
 
 // DefaultCloudPath is where the fake cloud lives inside a project.
@@ -28,7 +28,7 @@ type CloudResource struct {
 // Retryability is how a failure rule names one of the three
 // provider.Retryability classifications in the cloud file.
 //
-// A boolean cannot express the middle category, and infrata's executor treats all
+// A boolean cannot express the middle category, and infrena's executor treats all
 // three differently: a create or delete is never retried on an ambiguous failure,
 // and is retried only when the provider says it is safe (docs/writing-a-provider.md
 // §5 has the table). This provider is the only thing that will ever produce those
@@ -127,7 +127,7 @@ func LoadCloud(path string) (*Cloud, error) {
 // Save writes the cloud file indented, because a human edits it.
 //
 // The write is atomic — temporary file in the same directory, then a rename —
-// the same discipline infrata's own state file uses. A plain os.WriteFile truncates in
+// the same discipline infrena's own state file uses. A plain os.WriteFile truncates in
 // place, and the provider rewrites this file on every operation including Read,
 // so a concurrent reader would see a half-written file and report "unexpected
 // end of JSON input", which looks like a provider failure rather than a harness

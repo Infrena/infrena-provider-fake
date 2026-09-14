@@ -1,15 +1,23 @@
-# Writing an infrata provider
+# Writing an infrena provider
 
-This guide is for a Go developer who knows their cloud's API and has never used infrata. By the end
-you should be able to build `infrata-plugin-<yourcloud>`, test it without a cloud account, and
+This guide is for a Go developer who knows their cloud's API and has never used infrena. By the end
+you should be able to build `infrena-plugin-<yourcloud>`, test it without a cloud account, and
 release it.
 
 [`AGENT.md`](../AGENT.md) is the short reference: what to do. This guide explains why, because the
-rules only make sense once you know what the host does with your answers. Every claim about infrata
-below was checked against infrata's source. Every excerpt is copied from this repository (a working
-plugin, `infrata-plugin-fake`) or from infrata's own tree, with the `path:line` it came from. Paths
-starting `pkg/`, `internal/` or `PLAN.md` are in the infrata repository. All other paths are in this
+rules only make sense once you know what the host does with your answers. Every claim about infrena
+below was checked against infrena's source. Every excerpt is copied from this repository (a working
+plugin, `infrena-plugin-fake`) or from infrena's own tree, with the `path:line` it came from. Paths
+starting `pkg/`, `internal/` or `PLAN.md` are in the infrena repository. All other paths are in this
 one.
+
+**A note on the name.** Infrena was called Infrata until 2026-09-14, when it was renamed over a legal
+name collision. The module path, the CLI, plugin binary names (`infrata-plugin-<name>` became
+`infrena-plugin-<name>`), the `INFRATA_*` environment variables and the manifest's floor key all
+changed. Engine releases up to v0.3.0 were published under the old names, and v0.4.0 will be the
+first under the new one. This repository's plugin releases up to and including v0.2.0 are named
+`infrata-plugin-fake` and pair only with infrata v0.3.0 and earlier. Where this guide cites a
+pre-rename engine release or quotes its output, it keeps the name that release actually had.
 
 Contents:
 
@@ -23,7 +31,7 @@ Contents:
 8. [Credentials](#8-credentials)
 9. [What the host enforces, so you don't](#9-what-the-host-enforces-so-you-dont)
 10. [Versioning and releasing](#10-versioning-and-releasing)
-11. [Depending on infrata today](#11-depending-on-infrata-today)
+11. [Depending on infrena today](#11-depending-on-infrena-today)
 12. [The manifest, `plugin.yaml`](#12-the-manifest-pluginyaml)
 13. [The release gate](#13-the-release-gate)
 14. [A real cloud: AWS as the worked example](#14-a-real-cloud-aws-as-the-worked-example)
@@ -32,18 +40,18 @@ Contents:
 
 ## 1. What a plugin is
 
-A plugin is an ordinary Go executable. infrata starts it as a child process, and the two talk over
+A plugin is an ordinary Go executable. infrena starts it as a child process, and the two talk over
 the child's stdin and stdout in newline-delimited JSON: one JSON object per line. You never write
 that transport yourself. A plugin's whole `main` is one call:
 
 ```go
-// cmd/infrata-plugin-fake/main.go:9
+// cmd/infrena-plugin-fake/main.go:9
 func main() { pluginsdk.Main(fake.NewPlugin()) }
 ```
 
 `pluginsdk.Main` reads requests, runs each one in its own goroutine, calls your methods, and writes
 the responses (`pkg/pluginsdk/serve.go:109-147`). Because every request gets a goroutine, one
-process serves every operation infrata runs in parallel. One process also serves every configured
+process serves every operation infrena runs in parallel. One process also serves every configured
 instance of the plugin: two accounts of your cloud means one process holding two configured
 clients, told apart by a handle (`pkg/pluginproto/proto.go:134-140`).
 
@@ -71,14 +79,14 @@ at all, and don't rely on the guard.
 
 ### stderr is your log
 
-Everything your plugin writes to stderr is kept by the host. Under `--verbose`, infrata prints each
+Everything your plugin writes to stderr is kept by the host. Under `--verbose`, infrena prints each
 line prefixed with the plugin's name, as `[fake] …` (`internal/pluginhost/connect.go:137-147`,
 `internal/cli/context.go:107-112`). Without `--verbose` the lines are not shown, but the last 20 are
 always kept (`connect.go:86`). If the plugin exits unexpectedly, the error message quotes them under
 "Its last output was:" (`internal/pluginhost/errors.go:105-117`).
 
 That tail is often the only explanation a user gets. A plugin that dies of a missing credential
-otherwise shows up only as "the plugin stopped responding" — infrata replaces the bare `io.EOF` a
+otherwise shows up only as "the plugin stopped responding" — infrena replaces the bare `io.EOF` a
 closed pipe leaves behind with that sentence (`internal/pluginhost/errors.go:100-117`), because "EOF"
 is a Go sentinel, not something a user should have to know means "the plugin exited". It also means
 anything you print can end up in an error message, even without `--verbose` (see
@@ -86,14 +94,14 @@ anything you print can end up in an error message, even without `--verbose` (see
 
 ### The cookie
 
-The host launches a plugin with `INFRATA_PLUGIN_COOKIE` set to a fresh random value
+The host launches a plugin with `INFRENA_PLUGIN_COOKIE` set to a fresh random value
 (`internal/pluginhost/connect.go:62-68`). Without it, `pluginsdk.Main` prints what the binary is and
 exits 2 (`pkg/pluginsdk/serve.go:34-40`):
 
 ```
-$ ./infrata-plugin-fake
-fake is an infrata provider plugin: it is run by infrata, not directly.
-Put it where infrata looks for plugins and name it in your `providers:` block.
+$ ./infrena-plugin-fake
+fake is an infrena provider plugin: it is run by infrena, not directly.
+Put it where infrena looks for plugins and name it in your `providers:` block.
 $ echo $?
 2
 ```
@@ -104,24 +112,24 @@ only checks that it is present (`internal/pluginhost/cookie.go:9-12`). With the 
 empty stdin, the plugin writes its handshake line and exits 0:
 
 ```
-$ INFRATA_PLUGIN_COOKIE=x ./infrata-plugin-fake </dev/null
+$ INFRENA_PLUGIN_COOKIE=x ./infrena-plugin-fake </dev/null
 {"protocol":1,"name":"fake","version":"0.0.0-dev"}
 ```
 
 `scripts/release-check` uses exactly that to read a built binary's version (section 13).
 
-### Where infrata finds the binary
+### Where infrena finds the binary
 
-The binary must be named `infrata-plugin-<name>`, plus `.exe` on Windows
-(`internal/pluginhost/connect.go:150-155`). infrata searches these places in order and uses the
+The binary must be named `infrena-plugin-<name>`, plus `.exe` on Windows
+(`internal/pluginhost/connect.go:150-155`). infrena searches these places in order and uses the
 first match (`connect.go:159-202`, `internal/pluginhost/loader.go:185-195`):
 
-1. `--plugin-dir`, then `INFRATA_PLUGIN_PATH`
+1. `--plugin-dir`, then `INFRENA_PLUGIN_PATH`
 2. `<project>/.infra/plugins/`
-3. `~/.local/share/infrata/plugins/`
+3. `~/.local/share/infrena/plugins/`
 4. `$PATH`
 
-While developing, `--plugin-dir ./bin` is the shortest loop. With `--verbose`, infrata prints which
+While developing, `--plugin-dir ./bin` is the shortest loop. With `--verbose`, infrena prints which
 path each plugin was loaded from (`loader.go:112-114`).
 
 ---
@@ -134,12 +142,12 @@ configuration. `Provider` is one configured instance of it.
 The split exists to break a cycle. To configure an instance you need its resolved configuration.
 Resolving configuration needs variables, variables need a compile, and a compile needs the resource
 schemas. Schemas need no configuration: a server type is described the same way whichever account
-it would be created in. So infrata asks for schemas first, and configures instances later
+it would be created in. So infrena asks for schemas first, and configures instances later
 (`pkg/provider/provider.go:79-90`).
 
 In the host, both interfaces are wrapped by an adapter, `internal/pluginhost/adapter.go`. It sends
 your methods only what they need, and then **rebuilds** your answer under its own rules before
-anything else in infrata sees it. The adapter has no bypass (`adapter.go:119-123`). Each row below
+anything else in infrena sees it. The adapter has no bypass (`adapter.go:119-123`). Each row below
 says what the host does to the result.
 
 | Method | What your plugin is sent | What the host does with the result |
@@ -148,17 +156,17 @@ says what the host does to the result.
 | `Plugin.Definitions()` | nothing | Validated when the plugin loads (see [section 9](#9-what-the-host-enforces-so-you-dont)). Any failure refuses the whole plugin. |
 | `Plugin.New(cfg)` | instance name, that instance's resolved configuration, project directory (`pkg/pluginproto/proto.go:128-132`) | An error is reported as "provider instance … could not be configured", pointing at the `providers:` entry (`internal/providers/prepare.go:302-309`). |
 | `Version()` (optional) | nothing | Sent in the handshake. A plugin that doesn't implement it reports `0.0.0` (`serve.go:343-348`). |
-| `Provider.Read` | type, address, provider ID, attributes | `(nil, nil)` means the resource is gone (`adapter.go:161-163`). Otherwise rebuilt, keeping the bookkeeping from the state infrata already held (`adapter.go:164`). |
+| `Provider.Read` | type, address, provider ID, attributes | `(nil, nil)` means the resource is gone (`adapter.go:161-163`). Otherwise rebuilt, keeping the bookkeeping from the state infrena already held (`adapter.go:164`). |
 | `Provider.Create` | type, address, desired attributes | `(nil, nil)` becomes an error saying the resource may exist untracked (`adapter.go:173-175`). Otherwise rebuilt, with the address taken from the desired resource (`adapter.go:185-187`). |
 | `Provider.Update` | current and desired, each as type, address, provider ID, attributes | `(nil, nil)` becomes the same error (`adapter.go:200-202`). Otherwise rebuilt from current. |
 | `Provider.Delete` | type, address, provider ID, attributes | Error only; the host rebuilds nothing. Make deleting something already gone succeed, as the fake does (`internal/fake/provider.go:222-236`). Otherwise a resource someone removed by hand turns the next destroy into an error about a resource that no longer exists. |
 | `Provider.Discover` | the types wanted — nothing else. There is no region field on the request ([section 14](#regions-a-default-on-the-instance-overridden-per-resource) explains why) | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
-| `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrata's `import` command, never by you (`internal/cli/import.go:166`). |
+| `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrena's `import` command, never by you (`internal/cli/import.go:166`). |
 | `Provider.ClassifyError` | *called in your process* | See [section 5](#5-errors-and-retries). |
 
 ### What is never sent
 
-A resource in infrata's state carries bookkeeping your cloud knows nothing about: its dependencies,
+A resource in infrena's state carries bookkeeping your cloud knows nothing about: its dependencies,
 its lifecycle flags (`prevent_destroy`, `retain`, `ignore_changes`), and its creation and update
 timestamps. **None of it is ever sent to a plugin.** The wire type has no fields for it
 (`pkg/pluginproto/proto.go:151-172`).
@@ -203,7 +211,7 @@ it. The host refuses to guess, and says so to the user:
 ```go
 // internal/pluginhost/adapter.go:268-274
 	return fmt.Errorf(
-		"%s reported no result from %s of %s, so infrata cannot record what now exists.\n"+
+		"%s reported no result from %s of %s, so infrena cannot record what now exists.\n"+
 			"If the operation did take effect, that resource exists and is not in state: "+
 			"check %s directly before re-running.\n"+
 			"This is a defect in the plugin — a successful %s must report the resource it "+
@@ -225,9 +233,9 @@ noisier, since nothing can compare against it until a later `Read` fills it in �
 
 ### `Discover` and `Import`
 
-`Discover` answers "what exists?", and that includes resources infrata did not create, which is the
+`Discover` answers "what exists?", and that includes resources infrena did not create, which is the
 only reason discovery exists. The fake reports every resource in its cloud file, including ones
-without an infrata address (`internal/fake/provider.go:238-271`). Filter by `req.Types` in your
+without an infrena address (`internal/fake/provider.go:238-271`). Filter by `req.Types` in your
 plugin, using whatever list call your API has for a type. The host passes `req.Types` through and
 does not filter your answer by it (`adapter.go:211-233`).
 
@@ -289,11 +297,11 @@ A schema is plain data. It crosses a pipe as JSON, so it holds no functions
 		},
 ```
 
-`infrata explain fake.database` renders that schema. It needs no project file: infrata loads the
+`infrena explain fake.database` renders that schema. It needs no project file: infrena loads the
 plugin named by the type's prefix.
 
 ```
-$ infrata explain fake.database
+$ infrena explain fake.database
 fake.database
   A fake database. Requires a network.
 
@@ -345,7 +353,7 @@ without `Computed`. `Definition.Validate` refuses all three (`pkg/schema/definit
 Mark an attribute `ForceNew` when your API cannot change it in place: a server's image, a
 database's engine, a network's CIDR. A change to it plans as **replace** instead of **update**, and
 the plan names the attribute that forced it (`internal/planner/render.go:94-97`). This is the
-README's drift example: someone edited `engine` outside infrata.
+README's drift example: someone edited `engine` outside infrena.
 
 ```
   -/+ fake.database.db  (replacement forced by: engine)
@@ -428,7 +436,7 @@ Some attributes are both the user's and the cloud's: configuration *may* set the
 doesn't, the cloud chooses. A subnet's availability zone is the classic case. Declare those
 `Optional: true, Computed: true`.
 
-**infrata:** (v0.3.0, `PLAN.md` §14.1, `pkg/schema/attribute.go:22-40`)
+**infrena:** (v0.3.0, `PLAN.md` §14.1, `pkg/schema/attribute.go:22-40`)
 
 - **Set in configuration**, it is an ordinary attribute: diffed normally, and `ForceNew` applies.
 - **Unset**, the value the provider reports is recorded and **never diffed** (`diffAttributes`,
@@ -442,7 +450,7 @@ doesn't, the cloud chooses. A subnet's availability zone is the classic case. De
 - **A plan** marks a provider-chosen value `[provider-chosen, not in configuration]` under
   `--verbose`, and always when the attribute is `ForceNew`, where a later explicit value would
   replace the resource (`renderAttributeName`, `internal/planner/render.go`). It does not say "no
-  longer set in configuration", because state can't tell infrata whether configuration ever set it.
+  longer set in configuration", because state can't tell infrena whether configuration ever set it.
 - **`import --generate`** writes the `ForceNew` ones, which are the resource's identity, and omits
   the updatable ones, which would pin every cloud default into the file (`internal/generator/generate.go`).
 
@@ -452,7 +460,7 @@ forward into the operation (`afterAttributes`, `internal/planner/diff.go:324-367
 not asked to change it. An `Update` loop that keeps `Computed` attributes, like
 [the fake's](#the-update-contract), keeps these too.
 
-Reproduced 2026-09-14 against infrata v0.3.0, with a scratch copy of this plugin (not shipped) whose
+Reproduced 2026-09-14 against infrena v0.3.0, with a scratch copy of this plugin (not shipped) whose
 `fake.database` gained a `zone` that the fake cloud fills with `zone-a` when configuration names
 none. Declared `{Kind: value.KindString, ForceNew: true}`, the unedited basic project plans a
 replacement straight after `apply`:
@@ -475,7 +483,7 @@ Error: cannot describe "fake.database": the fake plugin sent an invalid schema: 
 
 ### `Aliases`: other spellings of one attribute
 
-**infrata:** (v0.3.0, `PLAN.md` §14.1) `Aliases` lists alternative spellings configuration may use,
+**infrena:** (v0.3.0, `PLAN.md` §14.1) `Aliases` lists alternative spellings configuration may use,
 for example `Aliases: []string{"cidr", "cidr_block"}` on an attribute declared `CidrBlock`.
 
 - **Matching is case-insensitive** across the canonical name and every alias, and folds case only:
@@ -483,7 +491,7 @@ for example `Aliases: []string{"cidr", "cidr_block"}` on an attribute declared `
 - **Names that fold together are refused at load.** `Validate` rejects two attributes, an attribute
   and an alias, or two aliases that are equal ignoring case (`checkSpellings`, `pkg/schema/alias.go`),
   so a collision is a plugin that won't start, not a runtime guess. **This binds plugins that declare
-  no aliases too:** attributes `Name` and `name` on one type no longer load on an infrata v0.3.0 host,
+  no aliases too:** attributes `Name` and `name` on one type no longer load on an infrena v0.3.0 host,
   whatever protocol the plugin speaks, because the host validates every schema it receives
   (`adapter.go:72-74`).
 - **The compiler resolves every spelling to the canonical name, once**, at its boundary
@@ -493,7 +501,7 @@ for example `Aliases: []string{"cidr", "cidr_block"}` on an attribute declared `
 - **Plans and `import --generate` display the first declared alias**, and `explain` lists every
   spelling (`Display` and `Spellings`, `pkg/schema/alias.go`). Put the spelling you want users to read
   first.
-- **Aliases are schema, and cross the wire with it.** infrata holds no mapping of its own, so changing
+- **Aliases are schema, and cross the wire with it.** infrena holds no mapping of its own, so changing
   an alias needs a plugin release.
 
 **Recommendation:** add an alias only for a spelling users genuinely reach for, such as the cloud
@@ -507,7 +515,7 @@ the resource match `desired`. That includes **removing** anything `desired` no l
 
 Merging instead is the easy mistake. If a user deletes `tags:` from configuration, a merging `Update`
 reports success but leaves the tags in place, and every later plan proposes removing them again,
-forever. The one exception is computed attributes. infrata fills `desired` with the computed values
+forever. The one exception is computed attributes. infrena fills `desired` with the computed values
 it has observed (`afterAttributes` in `internal/planner/diff.go`), but a computed value it has never
 observed is simply absent. Absent there means "not known", not "remove it", so a
 remove-everything-not-in-desired loop must keep computed attributes:
@@ -532,7 +540,7 @@ remove-everything-not-in-desired loop must keep computed attributes:
 ```
 
 Tested directly by `internal/fake/provider_test.go:249`, and end to end by the e2e subtest "removing
-an optional attribute converges" (`e2e/e2e_test.go:205-213`).
+an optional attribute converges" (`e2e/e2e_test.go:206-214`).
 
 ---
 
@@ -546,7 +554,7 @@ no network (here with no `providers:` block, so the database's implicit instance
 plugin, `"fake"`):
 
 ```
-$ infrata plan dev
+$ infrena plan dev
 Error: "db" is missing required network
   at infra.yml:7:3
 
@@ -575,10 +583,10 @@ so the order resources are created in, still comes from the reference the user w
 
 **Recommendation: treat `Requirements` as a pre-flight hint, not the correctness mechanism.** It
 checks that something of the right type exists in the same account, and nothing more — not state,
-not a region, not a traced reference. Both limits are intended, not pending: infrata's stated fix for
+not a region, not a traced reference. Both limits are intended, not pending: infrena's stated fix for
 either is the same one — letting a `Requirement` name the attribute it is satisfied by — and that is
 deferred until a real cloud plugin says what it needs. Model the dependency as a `Required` reference
-attribute too (`vpc_id: ${vpc.id}`), because the reference is what infrata actually validates end to
+attribute too (`vpc_id: ${vpc.id}`), because the reference is what infrena actually validates end to
 end; a plugin that relies on `Requirements` alone will pass validation with an under-specified or
 wrong reference still in the configuration.
 
@@ -586,8 +594,8 @@ wrong reference still in the configuration.
 
 ## 5. Errors and retries
 
-When a call fails, infrata asks your plugin how dangerous it would be to try again. You classify.
-infrata decides whether to retry and how long to wait (`pkg/provider/provider.go:52-60`). There are
+When a call fails, infrena asks your plugin how dangerous it would be to try again. You classify.
+infrena decides whether to retry and how long to wait (`pkg/provider/provider.go:52-60`). There are
 three classes:
 
 - **`SafeToRetry`**: the operation provably did not take effect. A throttle, or a 5xx your API
@@ -630,7 +638,7 @@ Some consequences worth knowing:
 - A classification value outside the three is never retried, for any operation (`retry.go:116-118`).
 
 Classify honestly even where two classes behave the same today. The classification describes your
-cloud. The retry rules belong to infrata, and a later version may treat the classes differently.
+cloud. The retry rules belong to infrena, and a later version may treat the classes differently.
 
 ### Why `NotSafeToRetry` is the default
 
@@ -673,7 +681,7 @@ Two things follow from how the SDK does this:
 If the plugin crashes, or the pipe breaks, every call still waiting fails with `NotSafeToRetry`
 (`client.go:150-154`). So does any error that did not come from the plugin at all
 (`adapter.go:139-147`). This is exactly the case where nobody knows whether a create happened, so
-the host never retries it. Because infrata writes state as each operation finishes, everything that
+the host never retries it. Because infrena writes state as each operation finishes, everything that
 completed before the crash is still recorded (`client.go:136-140`).
 
 ### Write error messages that say what to do
@@ -785,7 +793,7 @@ Examples in this repository: `internal/fake/provider_test.go` (CRUD, drift, remo
 
 ### Layer 2: the protocol and the trust rules, with `pkg/plugintest`
 
-`plugintest.Open` runs your plugin on one end of an in-memory pipe and infrata's real host on the
+`plugintest.Open` runs your plugin on one end of an in-memory pipe and infrena's real host on the
 other. It adds no second implementation of either (`pkg/plugintest/plugintest.go:17-21`). Every
 call is encoded, decoded and put through the host's rules, with no process started:
 
@@ -811,8 +819,8 @@ in [section 9](#9-what-the-host-enforces-so-you-dont) (`plugintest.go:58-63`).
 doesn't survive encoding shows up (`internal/fake/protocol_test.go:31-50`).
 
 The in-memory pipe is `internal/pluginhost.InProcess` (`internal/pluginhost/connect.go:28-58`).
-infrata's own in-process test suites use it too, to serve a fake provider test double without a
-binary (`internal/cli/main_test.go`, `TestMain`). A shipped infrata build serves nothing that way: it
+infrena's own in-process test suites use it too, to serve a fake provider test double without a
+binary (`internal/cli/main_test.go`, `TestMain`). A shipped infrena build serves nothing that way: it
 carries no provider at all (`internal/cli/context.go:64-83`, `builtinsFor`). `pkg/plugintest` exists
 because a package under `internal/` can't be imported by another module (`plugintest.go:22-24`).
 
@@ -825,17 +833,17 @@ re-attaches bookkeeping and redacts a discovered password.
 
 ### Layer 3: the binary, once, behind a build tag
 
-One suite builds real binaries and runs a real `infrata` against your plugin. That proves the
+One suite builds real binaries and runs a real `infrena` against your plugin. That proves the
 packaging: the binary name, the search path, the handshake, and real output. `e2e/e2e_test.go` is
-behind `//go:build e2e` (`e2e/e2e_test.go:1`) because it builds the `infrata` CLI from source, which is
+behind `//go:build e2e` (`e2e/e2e_test.go:1`) because it builds the `infrena` CLI from source, which is
 slow. Without the tag, `go test ./...` never builds it. Run the suite with
-`go test -tags e2e -count=1 ./e2e/`. It looks for the infrata source in `INFRATA_SRC`, or next to this
-repository by default, and skips if the source isn't there (`e2e/e2e_test.go:36-44`, in `TestMain`).
+`go test -tags e2e -count=1 ./e2e/`. It looks for the infrena source in `INFRENA_SRC`, or next to this
+repository by default, and skips if the source isn't there (`e2e/e2e_test.go:37-45`, in `TestMain`).
 
-Its main test, `TestTheWorkflow` (`e2e/e2e_test.go:171`), walks the whole workflow against one project: explain,
+Its main test, `TestTheWorkflow` (`e2e/e2e_test.go:172`), walks the whole workflow against one project: explain,
 plan, apply (with a clean re-plan), a hand edit planning as a forced replacement and its repair, a
 removed optional attribute converging, an injected failure failing the apply once, removing a
-resource destroying it, discover plus import adopting what infrata did not create, and finally
+resource destroying it, discover plus import adopting what infrena did not create, and finally
 destroy emptying the cloud. Its projects are
 `e2e/testdata/basic/infra.yml` and `e2e/testdata/instances/infra.yml`. The README quotes the first
 byte for byte, and `internal/fake/readme_test.go` fails if they drift apart.
@@ -843,9 +851,9 @@ byte for byte, and `internal/fake/readme_test.go` fails if they drift apart.
 Keep this layer small. Each case costs a full process launch, and a failure here tells you less about
 where the bug is than the same failure at layer 1 or 2.
 
-The dependency also runs the other way for this one plugin. infrata's own integration suite builds
-`infrata-plugin-fake` from a sibling checkout of this repository and runs infrata against the binary,
-because infrata no longer ships any provider of its own (`tests/integration/plugin_test.go:15-26`,
+The dependency also runs the other way for this one plugin. infrena's own integration suite builds
+`infrena-plugin-fake` from a sibling checkout of this repository and runs infrena against the binary,
+because infrena no longer ships any provider of its own (`tests/integration/plugin_test.go:15-26`,
 `buildFakePlugin`). Your plugin has no such arrangement. Its binary-level suite is the only proof that
 your packaging works.
 
@@ -867,18 +875,18 @@ Always run with `-count=1`. Go caches test results, and a cached pass hides a fi
 
 ## 8. Credentials
 
-Most of this section is recommendation, not host behaviour. infrata has no credential mechanism of
+Most of this section is recommendation, not host behaviour. infrena has no credential mechanism of
 its own. Your plugin gets its configuration and its environment, and nothing else.
 
 **Take credentials the way your cloud's own tooling does**: its standard environment variables and
-config files. The plugin process inherits infrata's environment (`internal/pluginhost/connect.go:67-68`).
+config files. The plugin process inherits infrena's environment (`internal/pluginhost/connect.go:67-68`).
 A user who can already use your cloud's CLI shouldn't have to configure anything twice.
 
 **Accept explicit configuration in `providers:` as an override**, for users with more than one
 account. Remember that a value there reaches `New` *resolved* (`pkg/provider/provider.go:33-35`). It
 may come from a variable, so it can differ between environments, and the same `providers:` entry
 may mean a different account in `staging` and `prod`. Resolve credentials inside `New`, not at
-package init. (This is infrata's current design — `plan`, `apply`, `refresh`, `destroy` and
+package init. (This is infrena's current design — `plan`, `apply`, `refresh`, `destroy` and
 `import <env>` all resolve variables in `providers:` against the environment named on the command
 line. `discover` alone takes no environment, so it resolves only what doesn't need one and refuses
 anything else by name: see
@@ -909,7 +917,7 @@ func rejectUnknownKeys(config map[string]value.Value) error {
 and the user sees it against their `providers:` entry:
 
 ```
-$ infrata plan dev
+$ infrena plan dev
 Error: provider instance "main" could not be configured
   at infra.yml:7:5
 
@@ -924,8 +932,8 @@ Error: configuration is not valid
 it goes to the user's terminal, and so into CI logs (`internal/cli/context.go:107-112`). Even without
 `--verbose`, its last 20 lines are quoted in the error when your plugin exits unexpectedly
 (`internal/pluginhost/errors.go:105-117`). A debug line printing the request headers just before a
-panic puts the token in the failure message. infrata's redaction works on values that travel through
-infrata marked sensitive (`pkg/value/format.go:15`). It cannot redact text your plugin prints itself.
+panic puts the token in the failure message. infrena's redaction works on values that travel through
+infrena marked sensitive (`pkg/value/format.go:15`). It cannot redact text your plugin prints itself.
 The same goes for error messages: don't format a credential into an `error`, because its text is what
 the user sees.
 
@@ -934,7 +942,7 @@ the user sees.
 ## 9. What the host enforces, so you don't
 
 Several guarantees used to be rules in a doc comment that every provider had to remember. A binary
-someone else built can't be held to a comment, so infrata's host enforces them for every plugin
+someone else built can't be held to a comment, so infrena's host enforces them for every plugin
 (`PLAN.md` §31.1, "What the engine stops trusting a plugin with").
 
 **Do not reimplement any of these.** It isn't only wasted effort. A plugin that also does the host's
@@ -947,7 +955,7 @@ supposed to guard against.
    `Dependencies`, which is the only destroy-ordering information once a resource has left
    configuration.
 
-   The same holds for `lifecycle: ignore_changes: [...]` (infrata v0.3.0, `PLAN.md` §14.2). A user
+   The same holds for `lifecycle: ignore_changes: [...]` (infrena v0.3.0, `PLAN.md` §14.2). A user
    lists attributes something else owns, such as a task revision a CI pipeline sets on every deploy,
    and the planner stops proposing to revert them: state keeps the observed value, a create uses
    configuration's, and a replacement resets them and the plan says so. It is planner work on
@@ -987,7 +995,7 @@ supposed to guard against.
 8. **Error classification travels with the error, and a host-side failure is `NotSafeToRetry`**
    (`client.go:150-154`, `adapter.go:142-147`). *Prevents:* a crash or broken pipe during a create
    being retried into a duplicate resource.
-9. **The retry and backoff policy belongs to infrata** (`internal/executor/retry.go`). *Prevents:*
+9. **The retry and backoff policy belongs to infrena** (`internal/executor/retry.go`). *Prevents:*
    every plugin inventing its own idea of when a create is safe to repeat. Classify, and let the
    executor decide. (A retry *inside* your plugin for a transient read failure is fine, since the
    executor never retries reads; see section 5.)
@@ -1012,8 +1020,8 @@ var Version = "0.0.0-dev"
 ```bash
 # scripts/build-release:37-39 (inside the per-platform loop)
     go build -trimpath \
-      -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=${version}" \
-      -o "$work/$stem/$name" ./cmd/infrata-plugin-fake
+      -ldflags "-X github.com/infrena/infrena-provider-fake/internal/fake.Version=${version}" \
+      -o "$work/$stem/$name" ./cmd/infrena-plugin-fake
 ```
 
 Section 13 explains why the default must never equal the version in `plugin.yaml`.
@@ -1023,8 +1031,8 @@ Section 13 explains why the default must never equal the version in `plugin.yaml
 A plugin is a plain Go binary, so building for another platform is only `GOOS` and `GOARCH`.
 `CGO_ENABLED=0` gives a static binary that doesn't depend on the target's libc
 (`scripts/build-release:34-36`). The executable inside the archive must be named
-`infrata-plugin-<name>`, with `.exe` for Windows (`scripts/build-release:25-26`), because that is the
-filename infrata searches for (`internal/pluginhost/connect.go:150-155`). Archive naming is covered in
+`infrena-plugin-<name>`, with `.exe` for Windows (`scripts/build-release:25-26`), because that is the
+filename infrena searches for (`internal/pluginhost/connect.go:150-155`). Archive naming is covered in
 section 13.
 
 ### How a project pins your version
@@ -1053,7 +1061,7 @@ Error: the fake plugin does not satisfy this project's `plugins` constraint, and
   at infra.yml:4:3
 
   the fake plugin is version 0.0.0-dev, which does not satisfy >= 1.0.0
-    loaded from: …/bin/infrata-plugin-fake
+    loaded from: …/bin/infrena-plugin-fake
 
   Suggested action:
     Install a version matching >= 1.0.0, or widen the constraint once you have confirmed this one works.
@@ -1067,23 +1075,23 @@ Only a plugin reporting exactly `0.0.0` gets the separate message "does not repo
 - **There is one version per plugin, not per instance.** `plugins:` is keyed by plugin because every
   instance of a plugin shares one process (`PLAN.md` §31.1).
 
-Don't confuse this with a project's `infrata:` floor, the constraint on infrata itself. That check
-*exempts* development builds of infrata (`internal/compiler/compile.go:231-269`). `plugins:` does not
+Don't confuse this with a project's `infrena:` floor, the constraint on infrena itself. That check
+*exempts* development builds of infrena (`internal/compiler/compile.go:231-269`). `plugins:` does not
 exempt development builds of your plugin, because for the user it is a third-party binary they chose
 to install, and they can act on the complaint (`loader.go:136-140`).
 
 ### The protocol version is the compatibility contract
 
-What must stay compatible between infrata and your plugin is the **wire protocol**, not the Go types
+What must stay compatible between infrena and your plugin is the **wire protocol**, not the Go types
 you compiled against (`pkg/pluginproto/proto.go:9-12`). The host accepts a *set* of protocol versions
 (`proto.go:25-55`). A plugin built against an older SDK keeps working as long as its protocol version
-is in that set, so you don't have to rebuild for every infrata release (`PLAN.md` §61.3). Under
-infrata's own versioning rules, a minor release may add a protocol version but must keep the previous
+is in that set, so you don't have to rebuild for every infrena release (`PLAN.md` §61.3). Under
+infrena's own versioning rules, a minor release may add a protocol version but must keep the previous
 one, and only a major release may drop one (`PLAN.md` §61.1). If the set no longer includes your
 version, the user gets an error naming your plugin, its path, both sides' versions, and which one to
 upgrade (`internal/pluginhost/errors.go:23-46`).
 
-**infrata:** v0.3.0 raised `pluginproto.Version` to 2 and made `Supported` `{2, 1}` (`proto.go:25-55`).
+**infrena:** v0.3.0 raised `pluginproto.Version` to 2 and made `Supported` `{2, 1}` (`proto.go:25-55`).
 The messages kept their shape. The schema payload gained `optional` and `aliases`, and because an
 attribute decodes leniently, an older host would silently drop both, so a plugin relying on them must
 be refused by that host rather than half-work. Every plugin built against v0.3.0 announces 2, whether
@@ -1093,121 +1101,133 @@ what changes your manifest's `protocol` ([section 12](#protocol-what-this-releas
 Because of that, `pkg/pluginproto` "changes additively, and any removal bumps `protocol`" (`PLAN.md`
 §31.1, "Handshake and version") — a new optional field on the wire is not a protocol bump. `pkg/value`
 picked up exactly such a field: an unknown value may now carry the expression that will produce it,
-added `omitempty` with no version change (infrata commit `ca9db09`). Decode and encode values through
+added `omitempty` with no version change (infrena commit `ca9db09`). Decode and encode values through
 `pkg/value` itself, never a hand-rolled or strict decoder — one that rejects a key it doesn't
 recognise breaks on the next such change, even though nothing else about the protocol moved.
 
 ---
 
-## 11. Depending on infrata today
+## 11. Depending on infrena today
 
-`github.com/infrata/infrata` is a private repository, and it stays private until infrata is feature
+`github.com/infrena/infrena` is a private repository, and it stays private until infrena is feature
 complete (`PLAN.md` §31.1, "The repository stays PRIVATE until feature complete"). Its releases are
-real module versions (`v0.1.0`, `v0.2.0`, `v0.3.0`), but fetching one needs credentials. The setup this
-repository uses is two directives: a `require` naming the infrata **release** your plugin supports,
-and a `replace` pointing at a checkout of infrata next to your plugin, for local work:
+real module versions, but fetching one needs credentials. The setup this repository uses is two
+directives: a `require` naming the infrena **release** your plugin supports, and a `replace` pointing
+at a checkout of infrena next to your plugin, for local work:
 
 ```
 // go.mod
-require github.com/infrata/infrata v0.3.0
+require github.com/infrena/infrena v0.4.0
 
-replace github.com/infrata/infrata => ../infrata
+replace github.com/infrena/infrena => ../infrena
 ```
 
-`../infrata` is the directory `git clone` of infrata creates, so a fresh clone of both repositories
-side by side builds with no extra setup. Nothing else is needed from infrata. The SDK and protocol use
+**Mid-rename, there is no release to require yet.** Tags `v0.1.0` to `v0.3.0` were cut before the
+rename and declare the old module path, `github.com/infrata/infrata`, so none of them satisfies a
+require on `github.com/infrena/infrena`. `v0.4.0` will be the first that does, and until it is tagged
+this repository's `go.mod` requires `github.com/infrena/infrena v0.0.0`, a placeholder that names no
+release, and builds only through the `replace`. Its tooling treats the placeholder explicitly rather
+than pretending: `scripts/ci-use-infrena-tag` refuses it by name, so the gating CI job is red, and
+the `go.sum` guard below skips with a message saying why. Bumping the require to `v0.4.0` and running
+`scripts/ci-use-infrena-tag sum` ends both.
+
+`../infrena` is the directory `git clone` of infrena creates, so a fresh clone of both repositories
+side by side builds with no extra setup. Nothing else is needed from infrena. The SDK and protocol use
 only the standard library, so a plugin gains no third-party dependency from them (`PLAN.md` §31.1).
 
 ### A `replace` builds against a working tree, not a version
 
-`replace => ../infrata` compiles **whatever is on disk** in that checkout, committed or not. A green
-suite therefore proves your plugin works against *your* infrata working tree, which may hold
-uncommitted edits or a stale branch. It does not prove the plugin works against committed infrata.
-This bit this repository once. Its build saw a stale `internal/semver` that infrata had already
+`replace => ../infrena` compiles **whatever is on disk** in that checkout, committed or not. A green
+suite therefore proves your plugin works against *your* infrena working tree, which may hold
+uncommitted edits or a stale branch. It does not prove the plugin works against committed infrena.
+This bit this repository once. Its build saw a stale `internal/semver` that infrena had already
 moved, because the checkout on disk wasn't what was committed (`PLAN.md` §31.1, "The repository stays
 PRIVATE until feature complete").
 
 So CI must not use the `replace`. This repository's gating CI job drops it and builds against the
-infrata release `go.mod` requires, fetched as a module (`.github/workflows/ci.yml`, job `tag`). Locally,
-`git -C ../infrata status`, and check out the required tag, before you trust a result.
+infrena release `go.mod` requires, fetched as a module (`.github/workflows/ci.yml`, job `tag`). Locally,
+`git -C ../infrena status`, and check out the required tag, before you trust a result.
 
 **Recommendation:** keep a second, advisory CI job that does use the `replace`, against a fresh
-checkout of infrata's `main`. The two answer different questions: the tag job asks "does this plugin
-work with the infrata it declares?", the `main` job asks "has infrata `main` broken us?", which is an
+checkout of infrena's `main`. The two answer different questions: the tag job asks "does this plugin
+work with the infrena it declares?", the `main` job asks "has infrena `main` broken us?", which is an
 early warning about the next release. Only the first should gate a release. This repository marks
-the second `continue-on-error: true` (`ci.yml:99`).
+the second `continue-on-error: true` (`ci.yml:106`).
 
-### CI needs credentials for infrata
+### CI needs credentials for infrena
 
-Because infrata is private, CI needs a token both to check infrata out (for the e2e host) and for Go
-to fetch the module. This repository uses one repository secret, `INFRATA_CHECKOUT_TOKEN`. Make it a
-fine-grained personal access token scoped to **Contents: read-only** on `infrata/infrata` and nothing
+Because infrena is private, CI needs a token both to check infrena out (for the e2e host) and for Go
+to fetch the module. This repository uses one repository secret, `INFRENA_CHECKOUT_TOKEN`. Make it a
+fine-grained personal access token scoped to **Contents: read-only** on `infrena/infrena` and nothing
 else.
 
-Every out-of-tree plugin needs the same four steps while infrata is private. This repository puts
-them in `scripts/ci-use-infrata-tag use`, called from both `ci.yml` and `release.yml`:
+Every out-of-tree plugin needs the same four steps while infrena is private. This repository puts
+them in `scripts/ci-use-infrena-tag use`, called from both `ci.yml` and `release.yml`:
 
-1. **`GOPRIVATE=github.com/infrata/*`** in the job's environment. Go then fetches with git directly
+1. **`GOPRIVATE=github.com/infrena/*`** in the job's environment. Go then fetches with git directly
    and skips the public module proxy and checksum database, neither of which can see a private
    repository.
 2. **Git credentials from the token**, passed through `env` and never echoed:
 
    ```bash
-   git config --global url."https://x-access-token:${INFRATA_TOKEN}@github.com/infrata/".insteadOf "https://github.com/infrata/"
+   git config --global url."https://x-access-token:${INFRENA_TOKEN}@github.com/infrena/".insteadOf "https://github.com/infrena/"
    ```
 
-3. **Drop the `replace`**: `go mod edit -dropreplace=github.com/infrata/infrata`. Then build and test
+3. **Drop the `replace`**: `go mod edit -dropreplace=github.com/infrena/infrena`. Then build and test
    under the default `-mod=readonly`.
 4. **Check what resolved**: `go list -m -f '{{.Version}}{{with .Replace}} => {{.Path}}{{end}}'
-   github.com/infrata/infrata` must print exactly the required tag.
+   github.com/infrena/infrena` must print exactly the required tag.
 
 Three things that are easy to get wrong:
 
-- **Commit infrata's hashes to `go.sum`.** With the `replace` dropped, `-mod=readonly` needs
-  `github.com/infrata/infrata v0.3.0 h1:…` and its `/go.mod h1:…` line. Don't have CI run `go mod
+- **Commit infrena's hashes to `go.sum`.** With the `replace` dropped, `-mod=readonly` needs
+  `github.com/infrena/infrena v0.4.0 h1:…` and its `/go.mod h1:…` line. Don't have CI run `go mod
   tidy` or `go mod download` to write them: a checksum CI generated for itself verifies nothing, and
   because `GOPRIVATE` bypasses the checksum database, the committed hash is the only thing that
   would notice the tag being moved. Generate them locally, once, with the `replace` dropped. `go mod
   tidy` with the `replace` present **removes** them, so add a unit test that fails when they are
   missing and says how to restore them (`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` in
-  `scripts/scripts_test.go`; the restore is `scripts/ci-use-infrata-tag sum`, which runs `go mod tidy`
+  `scripts/scripts_test.go`; the restore is `scripts/ci-use-infrena-tag sum`, which runs `go mod tidy`
   on a scratch copy of `go.mod` without the `replace`). A no-argument `go mod download` records only
-  the `/go.mod` hashes, not enough to build.
+  the `/go.mod` hashes, not enough to build. While `go.mod` requires the `v0.0.0` placeholder the
+  guard skips, because there is nothing to pin; `TestTheGoSumGuardSkipsOnlyTheUnpinnedPlaceholder`
+  proves that it skips for that version alone and still fails for a real one whose hashes are
+  missing.
 - **Read the version from `go.mod`, not from `go list -m`.** `go mod edit -json` reads the file alone,
-  so it works before any infrata checkout exists; `go list -m` loads the module graph, which with the
-  `replace` present needs `../infrata`. Use that one read for both the module and the ref of the e2e
-  host's checkout (`ci.yml:56` and `ci.yml:64`), so the two can never disagree.
+  so it works before any infrena checkout exists; `go list -m` loads the module graph, which with the
+  `replace` present needs `../infrena`. Use that one read for both the module and the ref of the e2e
+  host's checkout (`ci.yml:61-63` and `ci.yml:71`), so the two can never disagree.
 - **A reusable workflow gets no secrets unless its caller passes them.** `release.yml` calls `ci.yml`
   with `secrets: inherit` (`release.yml:23`). Without it the token is empty and every fetch fails;
-  `scripts/ci-use-infrata-tag` refuses an empty token under GitHub Actions and says so.
+  `scripts/ci-use-infrena-tag` refuses an empty token under GitHub Actions and says so.
 
-Check the e2e host out somewhere other than `../infrata` (this repository uses `infrata-host`, with
-`INFRATA_SRC` pointing at it). A leftover `replace` would otherwise resolve to that checkout quietly,
+Check the e2e host out somewhere other than `../infrena` (this repository uses `infrena-host`, with
+`INFRENA_SRC` pointing at it). A leftover `replace` would otherwise resolve to that checkout quietly,
 and the build would never prove it can fetch the module.
 
-### Keep your module path outside infrata's
+### Keep your module path outside infrena's
 
-**Your plugin's module path must not be under `github.com/infrata/infrata/`.** The official AWS
-plugin, for example, is `github.com/infrata/infrata-provider-aws`, a separate path, not
-`github.com/infrata/infrata/providers/aws`.
+**Your plugin's module path must not be under `github.com/infrena/infrena/`.** The official AWS
+plugin, for example, is `github.com/infrena/infrena-provider-aws`, a separate path, not
+`github.com/infrena/infrena/providers/aws`.
 
-The reason is Go's `internal/` rule, which is checked by **import path, not by module**. infrata
+The reason is Go's `internal/` rule, which is checked by **import path, not by module**. infrena
 tested this on a scratch copy of its own repository (`PLAN.md` §31.1, "Where the code lives"):
 
-- A nested module named `github.com/infrata/infrata/providers/awsprobe`, with `replace => ../..`,
-  **compiled** while importing `github.com/infrata/infrata/internal/pluginhost`.
+- A nested module named `github.com/infrena/infrena/providers/awsprobe`, with `replace => ../..`,
+  **compiled** while importing `github.com/infrena/infrena/internal/pluginhost`.
 - The identical file in a module named `example.com/outsideprobe` failed with `use of internal package
-  github.com/infrata/infrata/internal/pluginhost not allowed`.
+  github.com/infrena/infrena/internal/pluginhost not allowed`.
 
-A plugin under infrata's path can therefore quietly depend on engine internals that no other plugin
+A plugin under infrena's path can therefore quietly depend on engine internals that no other plugin
 can reach, and the compiler never says so. Outside that path, if it compiles, every dependency is one
 any plugin author has. That is also why `pkg/plugintest` exists: `internal/pluginhost` is unreachable
 from a correctly named plugin (`pkg/plugintest/plugintest.go:22-24`).
 
-Your module's own `go` directive must be at least infrata's: `go 1.27.0` as of 2026-09-13 (infrata's
+Your module's own `go` directive must be at least infrena's: `go 1.27.0` as of 2026-09-13 (infrena's
 `go.mod:15`, and this repository's `go.mod:3`). If it's lower, the build fails with Go's ordinary
 "requires go >= …" error, which names the module whose requirement it is. If that module is
-infrata, raise your `go` line to match infrata's `go.mod`.
+infrena, raise your `go` line to match infrena's `go.mod`.
 
 ---
 
@@ -1218,29 +1238,42 @@ works with (`PLAN.md` §31.2). This repository's:
 
 ```yaml
 # plugin.yaml
-# plugin.yaml: what this plugin is, and what it works with. infrata PLAN.md §31.2.
+# plugin.yaml: what this plugin is, and what it works with. infrena PLAN.md §31.2.
 # Read at a release TAG, never at the default branch, which describes unreleased code.
-manifest: 1
+# manifest: 2 since the Infrata -> Infrena rename, which renamed the floor key `infrata:` to
+# `infrena:`. Releases up to v0.2.0 were tagged with `manifest: 1` and stay readable as they are.
+manifest: 2
 name: fake
 version: 0.2.0
 # The protocol THIS RELEASE'S binary speaks: for an SDK-built plugin, exactly one version, the
-# pluginproto.Version of the infrata go.mod requires. It changes in the same commit as that require
+# pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
 # and a later host protocol bump forces no re-release: the host keeps accepting older versions.
 protocol: [2]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
-description: A fake provider for testing infrata without a cloud account.
-# The oldest infrata release CI verifies this plugin against: go.mod's require, which ci.yml
-# builds and runs the e2e suite with. Nothing refuses a mismatched host at runtime yet; infrata
-# checks this at install (PLAN.md §31.3), which is designed but not built.
-infrata: ">= 0.3.0"
-source: https://github.com/infrata/infrata-provider-fake
+description: A fake provider for testing infrena without a cloud account.
+# The oldest infrena release this plugin works with: 0.4.0, the first release under the Infrena
+# name. Every earlier release is infrata, with a different module path, CLI and plugin binary name,
+# so no build of this plugin can pair with one. go.mod's require moves to v0.4.0 once that tag
+# exists, and from then on the floor matches the release CI builds and runs the e2e suite with.
+# Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
+# which is designed but not built.
+infrena: ">= 0.4.0"
+source: https://github.com/infrena/infrena-provider-fake
 ```
 
-infrata can parse and check a manifest: `pkg/pluginmanifest` has `Parse`, `Validate`,
-`SpeaksProtocol`, `Supports` and `AllowsInfrata` (`pkg/pluginmanifest/manifest.go:91-151`, `244`).
-But no infrata command reads one yet. The reader it was written for, `infrata plugins install`, is
-planned but not built (`PLAN.md` §31.1, Phase B; §31.2, "Where infrata reads it"). Loading a plugin
+**Write `manifest: 2`.** Format version 2 exists because of the rename: it spells the floor key
+`infrena:` where version 1 spelled it `infrata:`. That is a renamed key, not an added one, so the
+format version moved. `pkg/pluginmanifest` refuses `infrata:` in a version 2 manifest and `infrena:`
+in a version 1 one, each with a message naming the mistake (`checkFloorSpelling`,
+`pkg/pluginmanifest/manifest.go:161`). The alternative is worse: an unrecognised floor would read as
+absent, and absent means unconstrained. A release tagged with `manifest: 1` keeps being read as
+version 1, because the manifest is read at the tag.
+
+infrena can parse and check a manifest: `pkg/pluginmanifest` has `Parse`, `Validate`,
+`SpeaksProtocol`, `Supports` and `AllowsInfrena` (`pkg/pluginmanifest/manifest.go:101-184`, `288`).
+But no infrena command reads one yet. The reader it was written for, `infrena plugins install`, is
+planned but not built (`PLAN.md` §31.1, Phase B; §31.2, "Where infrena reads it"). Loading a plugin
 from the search path never looks at `plugin.yaml`. Ship it anyway. Your release gate checks
 against it (section 13). And once install exists, it will read the manifest at each release tag, so a
 release tagged without one stays without one. The plan is to install such a plugin with only a
@@ -1249,32 +1282,32 @@ warning (`PLAN.md` §31.2), but then none of the compatibility checks below appl
 ### Its shape follows from its purpose
 
 The manifest is fetched over the network and read **before any binary is downloaded**, so a search
-can answer "is this compatible with the infrata I'm running, and is there a build for my machine?"
-without downloading anything else. It will be read by infrata builds released for years afterwards.
+can answer "is this compatible with the infrena I'm running, and is there a build for my machine?"
+without downloading anything else. It will be read by infrena builds released for years afterwards.
 Every design decision below follows from those two facts.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `manifest` | yes | The format version of this file. Checked first, before any other key. |
-| `name` | yes | The plugin's name: binary `infrata-plugin-<name>`, `Plugin.Name()`, and every type's prefix. |
+| `name` | yes | The plugin's name: binary `infrena-plugin-<name>`, `Plugin.Name()`, and every type's prefix. |
 | `version` | yes | `MAJOR.MINOR.PATCH`. Must equal the tag the file is read at. |
 | `protocol` | yes | The protocol versions **this release's binary** speaks: exactly one for a plugin built with `pkg/pluginsdk`. See [below](#protocol-what-this-releases-binary-speaks). |
 | `platforms` | yes | `GOOS/GOARCH` for every build you publish. |
 | `description` | yes | One line, for a search result. |
-| `infrata` | no | The infrata releases this plugin is known to work with, in `pkg/semver` syntax. |
+| `infrena` | no | The infrena releases this plugin is known to work with, in `pkg/semver` syntax. |
 | `source` | no | Where the plugin lives, for a search result to link to. |
 
 (`PLAN.md` §31.2, the key table.)
 
-Validate your own manifest with `pkg/pluginmanifest.Parse` (`infrata/pkg/pluginmanifest/manifest.go`'s
-`Parse`) — the same parser `infrata plugins install` will use — rather than a hand check a typo
+Validate your own manifest with `pkg/pluginmanifest.Parse` (`infrena/pkg/pluginmanifest/manifest.go`'s
+`Parse`) — the same parser `infrena plugins install` will use — rather than a hand check a typo
 could pass.
 
 ### `protocol`: what this release's binary speaks
 
-**infrata:** `PLAN.md` §31.2, amended 2026-09-14 (infrata `b5f361b`, included in v0.3.0), defines
+**infrena:** `PLAN.md` §31.2, amended 2026-09-14 (infrena `b5f361b`, included in v0.3.0), defines
 `protocol` as the plugin protocol versions **this release's binary** can speak. For a plugin built
-with `pkg/pluginsdk` that is exactly one, the `pluginproto.Version` of the infrata it was built
+with `pkg/pluginsdk` that is exactly one, the `pluginproto.Version` of the infrena it was built
 against, which the SDK puts in the handshake (`pkg/pluginsdk/serve.go:92-96`). A longer list is only
 for a plugin that hand-rolls the protocol and genuinely negotiates several. Don't copy the host's
 `Supported` set: `[2, 1]` claims a protocol your binary cannot speak.
@@ -1285,9 +1318,9 @@ Three consequences follow:
    stays true: that binary announces 1 and always will.
 2. **A host protocol bump forces no re-release.** The old version stays in `Supported`, so an existing
    release keeps loading and keeps describing itself correctly.
-3. **Your next release changes `protocol` in the same commit as its infrata `require` bump**, because
+3. **Your next release changes `protocol` in the same commit as its infrena `require` bump**, because
    the rebuilt binary announces the new number. This repository went to `protocol: [2]` in the commit
-   that moved `go.mod` to `github.com/infrata/infrata v0.3.0`.
+   that moved `go.mod` to `github.com/infrata/infrata v0.3.0`, as the module was named then.
 
 Two checks enforce the third here. `internal/fake/manifest_test.go` requires `protocol` to be exactly
 `[pluginproto.Version]`, and `scripts/release-check` refuses a manifest whose `protocol` is not
@@ -1299,47 +1332,53 @@ The file on your default branch describes **unreleased** code. Reading it to jud
 the wrong question once `main` has moved on to `v1.3.0`. That is also the mistake an implementer makes
 by default, because the `HEAD` URL is the obvious one. The manifest holds two kinds of information:
 identity (`name`, `description`, `source`), which is the same on every ref, and the compatibility of
-one version (`version`, `protocol`, `platforms`, `infrata`), which is not. One file can serve both
+one version (`version`, `protocol`, `platforms`, `infrena`), which is not. One file can serve both
 only because it is always read at a tag (`PLAN.md` §31.2, "READ IT AT THE TAG").
 
-### Why the format is versioned when infrata's configuration is not
+### Why the format is versioned when infrena's configuration is not
 
-infrata's configuration language deliberately has no version number. It rejects unknown keys, so an
-older infrata that meets newer syntax stops and names the key it didn't understand (`PLAN.md` §61.2).
+infrena's configuration language deliberately has no version number. It rejects unknown keys, so an
+older infrena that meets newer syntax stops and names the key it didn't understand (`PLAN.md` §61.2).
 That works because configuration is written and read by the same person, at the same time, on one
 machine.
 
-A manifest is different. A plugin author writes it, and infrata builds read it for years afterwards
-with no way to upgrade the reader in step. If every reader rejected unknown keys, a 2026 infrata could
+A manifest is different. A plugin author writes it, and infrena builds read it for years afterwards
+with no way to upgrade the reader in step. If every reader rejected unknown keys, a 2026 infrena could
 never install a 2027 plugin. So readers reject unknown keys only for a `manifest` version they know,
 and tolerate them with a warning for a version they don't (`PLAN.md` §31.2, "Why the format is
 versioned").
 
-### Why `infrata` is optional
+### Why `infrena` is optional
 
-A missing `infrata` key means **unconstrained**. Don't write `infrata: ">= 0.0.0"` to say "works with
+A missing `infrena` key means **unconstrained**. Don't write `infrena: ">= 0.0.0"` to say "works with
 anything". It is a real constraint that means something subtly different, and it adds noise. State a
 floor only when you know of a release your plugin does not work with. When one is stated, a
-development build of infrata is exempt, as it is from a project's own floor (`PLAN.md` §31.2,
-"Compatible means three things"). Validate your `infrata:` string with `semver.ParseConstraint`
-(`pkg/semver/semver.go:126`) so you use the same parser infrata will.
+development build of infrena is exempt, as it is from a project's own floor (`PLAN.md` §31.2,
+"Compatible means three things"). Validate your `infrena:` string with `semver.ParseConstraint`
+(`pkg/semver/semver.go:126`) so you use the same parser infrena will.
 
-**infrata:** nothing enforces the field at runtime today. The check belongs to `infrata plugins
-install` (`PLAN.md` §31.2, "Where infrata reads it"; designed in §31.3, not built), and the handshake
-doesn't carry it. `pkg/pluginmanifest.AllowsInfrata` exists, but nothing in infrata calls it yet. A
+**infrena:** nothing enforces the field at runtime today. The check belongs to `infrena plugins
+install` (`PLAN.md` §31.2, "Where infrena reads it"; designed in §31.3, not built), and the handshake
+doesn't carry it. `pkg/pluginmanifest.AllowsInfrena` exists, but nothing in infrena calls it yet. A
 host older than your floor still loads your plugin. Today the field is documentation, and whatever
 your own release gate makes of it.
 
-**infrata:** "development build" means a host reporting `0.0.0` (`AllowsInfrata`,
-`pkg/pluginmanifest/manifest.go`). Now that infrata has tags, a plain `go build` of an infrata checkout
+**infrena:** "development build" means a host reporting `0.0.0` (`AllowsInfrena`,
+`pkg/pluginmanifest/manifest.go`). Now that infrena has tags, a plain `go build` of an infrena checkout
 isn't one. Go stamps the version from git: a clean checkout at `v0.2.0` reports `0.2.0`, and one commit
 past it reports `0.2.1-0.<time>-<hash>`, which compares as `0.2.1`. Measured 2026-09-13; a checkout at
-`v0.3.0` likewise reports `infrata 0.3.0 (45deb30, …)` (2026-09-14).
+`v0.3.0` likewise reported `infrata 0.3.0 (45deb30, …)` (2026-09-14, before the rename), and infrena
+`main` just after the rename reports `infrena 0.3.1-0.20260914150359-e2be8bf36135 (e2be8bf, …)`,
+which compares as `0.3.1`.
 
-**Recommendation:** make the floor the release your CI builds against, and check it there. This
-repository's `infrata: ">= 0.3.0"` matches `go.mod`'s `require`. The e2e test
-`TestTheInfrataUnderTestSpeaksTheManifestsProtocol` applies `AllowsInfrata` to a host built from
-that tag, so a floor above the tested release fails CI.
+**Recommendation:** make the floor the release your CI builds against, and check it there. The e2e
+test `TestTheInfrenaUnderTestSpeaksTheManifestsProtocol` applies `AllowsInfrena` to a host built from
+the tag `go.mod` requires, so a floor above the tested release fails CI. This repository's
+`infrena: ">= 0.4.0"` is the first renamed release, which `go.mod` will require once it is tagged.
+Until then `go.mod` requires the `v0.0.0` placeholder, no host can satisfy the floor (`main` compares
+as `0.3.1`, above), and the e2e test instead checks that the host is an unreleased build and that the
+floor refuses `0.3.0`, logging that the full check waits for a pinned release.
+`internal/fake/manifest_test.go` separately checks the floor refuses `0.3.x` and admits `0.4.0`.
 
 ### What it deliberately leaves out
 
@@ -1369,7 +1408,7 @@ You could write a unit test comparing `plugin.yaml` to a constant in the code. T
 ways. Someone can delete or skip a test, but a failing release step blocks the release. And a test
 checks source code, not the binary: it can't catch a build whose `-ldflags` stamp went wrong. The gate
 here runs in `.github/workflows/release.yml`'s `release` job, after CI has passed and the job has
-switched to the tagged infrata module, before anything is built or published (`release.yml:43-48`).
+switched to the tagged infrena module, before anything is built or published (`release.yml:43-48`).
 
 ### Why `Version()` defaults to `0.0.0-dev`
 
@@ -1378,24 +1417,24 @@ Suppose `Version` defaulted to `"0.2.0"`, the same as `plugin.yaml`. Then a rele
 named the wrong symbol would still report `0.2.0`, correct by coincidence, and the gate would pass.
 Go's linker ignores an `-X` for a symbol that doesn't exist, without any error
 (`scripts/release-check:7-8`). With the default at `0.0.0-dev`, a broken stamp shows up as a
-mismatch. `scripts/scripts_test.go:133-144` points `-X` at a nonexistent variable and checks that the
+mismatch. `scripts/scripts_test.go:135-146` points `-X` at a nonexistent variable and checks that the
 gate refuses, reporting `0.0.0-dev`. It also gives bug reports honest versions: a build from a
 checkout never claims to be a release (`internal/fake/plugin.go:15-20`).
 
 ### How `scripts/release-check` reads the version
 
-It needs no infrata at all. It builds the binary with the same stamp a release uses, then runs it
+It needs no infrena at all. It builds the binary with the same stamp a release uses, then runs it
 with the cookie set and an empty stdin. The SDK writes the handshake and exits, and the script pulls
 out the version field:
 
 ```bash
 # scripts/release-check:38-45
-CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrata-plugin-fake" ./cmd/infrata-plugin-fake
+CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrena-plugin-fake" ./cmd/infrena-plugin-fake
 
 # The binary refuses to start without the host's cookie. With it and an empty stdin, it writes
 # its handshake {"protocol","name","version"} and exits. Captured whole, not piped to head,
 # so pipefail cannot turn an early-closed pipe into a false failure.
-out="$(INFRATA_PLUGIN_COOKIE=release-check "$work/infrata-plugin-fake" </dev/null 2>/dev/null)"
+out="$(INFRENA_PLUGIN_COOKIE=release-check "$work/infrena-plugin-fake" </dev/null 2>/dev/null)"
 handshake="${out%%$'\n'*}"
 reported="$(printf '%s' "$handshake" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 ```
@@ -1410,24 +1449,24 @@ tested in `scripts/scripts_test.go`, the protocol one by
 
 ### Archive names and `SHA256SUMS`
 
-`infrata plugins install` will build the download name from a convention rather than read it from
+`infrena plugins install` will build the download name from a convention rather than read it from
 anywhere (`PLAN.md` §31.2):
 
 ```
-infrata-plugin-<name>_<version>_<goos>_<goarch>.tar.gz      (.zip for windows)
+infrena-plugin-<name>_<version>_<goos>_<goarch>.tar.gz      (.zip for windows)
 ```
 
 `scripts/build-release` builds every platform `plugin.yaml` lists (`build-release:16`). It archives
 each build under that name, with the binary, `plugin.yaml` and `README.md` inside a top-level
-directory of the same stem (`build-release:29-46`). `scripts/scripts_test.go:148-187`
+directory of the same stem (`build-release:29-46`). `scripts/scripts_test.go:150-189`
 (`TestBuildReleaseNamesArchivesByTheInstallConvention`) checks the names and contents. A wrongly named
 archive is a release nobody can install.
 
 After the build, the workflow checksums every archive into a `SHA256SUMS` release asset
 (`.github/workflows/release.yml:53-55`), and then publishes (`release.yml:57-60`). The checksums live
 in the release, not the manifest, because they don't exist until the build does. The tests and every
-build run against the infrata release `go.mod` requires, fetched as a module with
-`INFRATA_CHECKOUT_TOKEN` ([section 11](#ci-needs-credentials-for-infrata)).
+build run against the infrena release `go.mod` requires, fetched as a module with
+`INFRENA_CHECKOUT_TOKEN` ([section 11](#ci-needs-credentials-for-infrena)).
 
 To release: bump `version` in `plugin.yaml`, commit, tag `v<that version>`, and push the tag. If the
 tag, manifest or binary disagree, the workflow stops before publishing anything.
@@ -1438,51 +1477,51 @@ tag, manifest or binary disagree, the workflow stops before publishing anything.
 
 Everything above applies to any cloud. This section is about what changes when the cloud is real: real
 credentials, many regions, pagination, throttling, eventual consistency. It uses the next plugin,
-`infrata-plugin-aws` (repository `infrata-provider-aws`, module
-`github.com/infrata/infrata-provider-aws`), as the example.
+`infrena-plugin-aws` (repository `infrena-provider-aws`, module
+`github.com/infrena/infrena-provider-aws`), as the example.
 
 Each topic separates two kinds of statement, and labels them:
 
-- **infrata:** what infrata does, checked against its source, with the file and symbol.
+- **infrena:** what infrena does, checked against its source, with the file and symbol.
 - **Recommendation:** what an AWS plugin should do. Where it names the AWS SDK for Go v2, the API was
   checked against the SDK's developer guide (`docs.aws.amazon.com/sdk-for-go/v2/developer-guide`) or
   its package documentation on `pkg.go.dev`. The design is still a recommendation, not something
-  infrata enforces.
+  infrena enforces.
 
 Type names below, such as `aws.vpc`, `aws.subnet` and `aws.rds`, are illustrations drawn from
-infrata's initial AWS resource list (`PLAN.md` §32). This section is not the design of the whole
+infrena's initial AWS resource list (`PLAN.md` §32). This section is not the design of the whole
 plugin.
 
 ### The repository, and the SDK dependency
 
-**infrata:** AWS is a plugin in its own repository, building `infrata-plugin-aws`, not a directory
-inside infrata (`PLAN.md` §31.1, "Where the code lives"; §50.1). Its module path must be outside
-`github.com/infrata/infrata/` ([section 11](#keep-your-module-path-outside-infratas)).
+**infrena:** AWS is a plugin in its own repository, building `infrena-plugin-aws`, not a directory
+inside infrena (`PLAN.md` §31.1, "Where the code lives"; §50.1). Its module path must be outside
+`github.com/infrena/infrena/` ([section 11](#keep-your-module-path-outside-infrenas)).
 
 The AWS SDK for Go v2 is a third-party dependency, and **that is fine in a plugin's own module**.
-Keeping heavy dependencies out of infrata's core is part of why plugins are separate processes. The
+Keeping heavy dependencies out of infrena's core is part of why plugins are separate processes. The
 protocol itself adds no third-party dependency (`PLAN.md` §31.1, opening paragraphs), and
 `hashicorp/go-plugin` was rejected partly because gRPC would go "far past a dependency budget that so
 far holds two libraries"
 (`PLAN.md` §31.1, "Alternatives rejected"). Moving the AWS SDK out of the core module's dependency
 budget was also the original reason for giving AWS its own module (§31.1, "Where the code lives").
-Your plugin's `go.mod` can require whatever the cloud needs. infrata's never sees it.
+Your plugin's `go.mod` can require whatever the cloud needs. infrena's never sees it.
 
-**infrata:** every command starts its plugins, including `validate`, `explain` and `graph`. So a plugin
+**infrena:** every command starts its plugins, including `validate`, `explain` and `graph`. So a plugin
 with expensive startup, "like AWS SDK credential resolution", pays for it on every run (`PLAN.md`
 §31.1, "What this costs, recorded before it is built"). **Recommendation:** do no network work in
 `Definitions`, and keep `New` to what configuring an instance needs.
 
 ### Credentials and accounts
 
-**infrata:** a `providers:` entry holds two separate maps (`internal/config/declarations.go:43-54`,
+**infrena:** a `providers:` entry holds two separate maps (`internal/config/declarations.go:43-54`,
 `ProviderDecl`). Every key other than `plugin`, `name`, `default` and `defaults` is the plugin's own
 configuration (`internal/config/providers.go:87-111`, the `default:` branch of the key switch). It
 reaches `New` resolved, as `provider.Config.Values` (`pkg/provider/provider.go`, `Config`). The keys under `defaults:` are
 **attribute defaults for resources**. The plugin is never sent them
-([Regions](#regions-a-default-on-the-instance-overridden-per-resource) shows what they're for). infrata
+([Regions](#regions-a-default-on-the-instance-overridden-per-resource) shows what they're for). infrena
 has no credential mechanism of its own ([section 8](#8-credentials)), and the plugin process inherits
-infrata's environment.
+infrena's environment.
 
 **Recommendation:**
 
@@ -1517,7 +1556,7 @@ infrata's environment.
 The requirement: one plugin instance works across many regions. The user sets a default region once
 and overrides it on any resource, including from a variable.
 
-**infrata:** there is no region infrata gives you for free.
+**infrena:** there is no region infrena gives you for free.
 
 - **The discover request carries no region.** `provider.DiscoverRequest` and
   `pluginproto.DiscoverParams` declare only `Types` (`pkg/provider/provider.go`,
@@ -1525,8 +1564,8 @@ and overrides it on any resource, including from a variable.
   regions takes them from its own instance `config:` (below); the host cannot supply them because it
   does not know what a region IS for your cloud. (v0.2.0 still declared a `Region` field the host
   never set; v0.3.0 removed it, so a plugin that read it no longer compiles.)
-- **There is no ambient `region` (or `account`).** infrata seeds exactly two process variables into
-  every scope: `environment` and `project` (infrata `internal/variables/resolve.go`,
+- **There is no ambient `region` (or `account`).** infrena seeds exactly two process variables into
+  every scope: `environment` and `project` (infrena `internal/variables/resolve.go`,
   `ProcessVariables`; `PLAN.md` §6.3 and §12.1, amended 2026-09-13). `region` is an ordinary
   variable name — declare it under `variables:` like any other, or use a differently-named one, as
   the AWS example below does with `aws_region`. (Before v0.3.0, `region` was reserved but never
@@ -1554,7 +1593,7 @@ a schema default of `10`. The instance says `defaults: {size: ${db_size}}`, one 
 nothing, and one writes `size: 50`:
 
 ```
-$ infrata plan dev --var db_size=20
+$ infrena plan dev --var db_size=20
 ...
   + fake.database.uses_default
       endpoint: (known after apply)
@@ -1589,7 +1628,7 @@ Error: provider instance "fake" defaults "regoin", which no resource it serves a
   `defaults: {region: …}` therefore plans a destroy-and-create of every regional resource that
   inherited the old default, not just the ones a user meant to move. Before changing it, set
   `region:` explicitly on any resource that must not move. For a resource that must never be
-  replaced this way, infrata's `lifecycle: prevent_destroy: true` turns that plan into a refusal
+  replaced this way, infrena's `lifecycle: prevent_destroy: true` turns that plan into a refusal
   instead of a destroy-and-create (`PLAN.md` §15, §38; enforced at plan time in
   `internal/compiler/validate.go`).
 - **Discovery's regions come from `config:`**, for example `discover_regions: [us-east-1, eu-west-1]`.
@@ -1630,7 +1669,7 @@ resources:
     region: ${dr_region}       # overridden per resource, from a variable
 ```
 
-**This is infrata's current design: `plan`, `apply`, `refresh`, `destroy` and `import <env>` all
+**This is infrena's current design: `plan`, `apply`, `refresh`, `destroy` and `import <env>` all
 resolve `providers:` against the environment named on the command line; `discover` alone has none to
 resolve it against.** `plan` and `apply` resolve it the ordinary way, through `compiler.Compile`.
 `refresh` and `destroy` — which never compile — build the instance through `compiler.VariableScope`
@@ -1654,12 +1693,12 @@ legitimately has no environment, and passes `""` for it.
 BY NAME rather than guessing at it (`internal/cli/context.go`,
 `registerStateInstances`/`refuseUnresolvedInstances`).
 
-infrata's `PLAN.md` §12.1 (amended 2026-09-13 twice) records why any of this is possible: resolving
+infrena's `PLAN.md` §12.1 (amended 2026-09-13 twice) records why any of this is possible: resolving
 variables is stages 1-4 and needs no registry, no plugins, no resources and no modules, which is what
 makes it available to a command that never compiles — and why `import <env>`'s own environment was
 there to pass down all along.
 
-Checked against a built infrata with this repository's plugin, using `providers: [{plugin: fake,
+Checked against a built infrena with this repository's plugin, using `providers: [{plugin: fake,
 cloud: ${cloud_file}}]` with `cloud_file` set ONLY in `vars/dev.yml` (no `default:`, which every
 command resolves without an environment): `apply dev` created a resource, and — after hand-adding an
 untracked one to the cloud file — `import dev fake.network.net-77 --generate` resolved `cloud_file`
@@ -1696,7 +1735,7 @@ exist — see [Import IDs](#import-ids) below for the ambiguity refusal and `--p
 
 ### Discover against a real API
 
-**infrata:** `Walk` asks each **instance** only about types it offers and that were requested. It
+**infrena:** `Walk` asks each **instance** only about types it offers and that were requested. It
 skips an instance that offers none of them (`internal/discovery/walk.go:48-59`). It then sorts every
 result by type and provider ID before naming them (`walk.go:79-85`), so your order doesn't affect
 output. For how the host treats undeclared types and attributes, see
@@ -1711,13 +1750,13 @@ attribute on a declared type fails the whole discovery.
   looping on `HasMorePages()` and `NextPage(ctx)`. **Check `ctx` between pages**: abandoning a read
   loses nothing ([section 6](#6-cancellation)).
 - **Loop over `discover_regions`** and use each region's client.
-- **Include resources infrata did not create.** Finding those is the only reason discovery exists.
+- **Include resources infrena did not create.** Finding those is the only reason discovery exists.
 - **Return only attributes your schema declares**, including `region`.
 - Sort by provider ID if you like, for stable unit tests. The host sorts anyway.
 
 ### Import IDs
 
-**infrata:** `infrata import <env> <type>.<provider id>` doesn't pass an arbitrary string to your
+**infrena:** `infrena import <env> <type>.<provider id>` doesn't pass an arbitrary string to your
 plugin. It runs discovery, looks the selector up among the results as `<type>.<provider id>`, and
 calls `Import` with the discovered type and provider ID (`internal/cli/import.go:161`,
 `selectForImport` at `:232`). A selector discovery didn't return is refused with `not found by
@@ -1734,7 +1773,7 @@ each hold `net-1`. `narrowToSelectors` (`internal/cli/import.go:260`, corrected 
 ambiguous selector rather than silently picking one, naming every instance that holds it:
 
 ```
-$ infrata import dev fake.network.net-1
+$ infrena import dev fake.network.net-1
 Error: fake.network.net-1 exists in more than one provider instance: acct1, acct2
 A selector names no instance, and a provider ID is unique within an account rather than across
 them, so this would adopt one of them arbitrarily.
@@ -1745,7 +1784,7 @@ Narrow it with --provider <instance>
 "adopt everything discovery found in this one account" when no selectors are given at all — the
 no-selector form otherwise has no way to say that. A `--provider` naming an instance discovery found
 nothing for is refused by name rather than treated as an empty, successful import (a typo would
-otherwise silently import zero resources). Verified against a built infrata: two fake instances each
+otherwise silently import zero resources). Verified against a built infrena: two fake instances each
 holding an untracked `net-1`, `import dev fake.network.net-1` produced the error above, and `import
 dev fake.network.net-1 --provider acct2` then imported it.
 
@@ -1767,7 +1806,7 @@ dev fake.network.net-1 --provider acct2` then imported it.
 
 ### Errors and retries
 
-**infrata:** [section 5](#5-errors-and-retries) is the authority. The table there applies unchanged:
+**infrena:** [section 5](#5-errors-and-retries) is the authority. The table there applies unchanged:
 creates and deletes are retried only on `SafeToRetry`; updates also on `ConditionallyRetryable`;
 reads, discovery and import never. "Retried" means up to three attempts in total. A value outside the
 three classes is never retried.
@@ -1804,16 +1843,16 @@ why classifying blind should lean cautious.
 
 Two SDK details make that table work. First, when the SDK's own retryer gives up, it wraps the last
 error in `retry.MaxAttemptsError`, which has `Unwrap`, so `errors.As` still finds the `smithy.APIError`
-inside. Second, keep `ClassifyError` a pure function of the error (section 5): infrata's plugin SDK
+inside. Second, keep `ClassifyError` a pure function of the error (section 5): infrena's plugin SDK
 asks any one of your configured instances to classify, not necessarily the one that failed.
 
 **Two retry loops.** The SDK retries by default. `retry.NewStandard` makes three attempts, and its
 default retryables include throttling codes, HTTP 500/502/503/504 and connection errors. The package
-documentation doesn't distinguish idempotent operations from others. infrata's executor then retries
+documentation doesn't distinguish idempotent operations from others. infrena's executor then retries
 what you classify `SafeToRetry` up to three times, so one throttled create can become nine requests,
 with two backoff schedules multiplied. Choose deliberately:
 
-- **For reads and discovery, let the SDK retry.** infrata never retries them, so the SDK's retryer is
+- **For reads and discovery, let the SDK retry.** infrena never retries them, so the SDK's retryer is
   the only one there.
 - **For a create with no idempotency token, don't let the SDK resend it silently.** If a
   `CreateVpc` connection drops after AWS acted, the SDK's retry makes a second VPC that nothing
@@ -1821,7 +1860,7 @@ with two backoff schedules multiplied. Choose deliberately:
   for that call, with `func(o *ec2.Options) { o.RetryMaxAttempts = 1 }` or a client built with
   `aws.NopRetryer`. A per-call `RetryMaxAttempts` equal to the client's own is skipped
   (`finalizeOperationRetryMaxAttempts` wraps the retryer only when the value differs), which is
-  harmless, since the client already makes that many attempts. Then classify the failure honestly so infrata decides.
+  harmless, since the client already makes that many attempts. Then classify the failure honestly so infrena decides.
 - **Where the API accepts a client token** (EC2 lists `RunInstances`, `CreateNatGateway` and
   `CreateRouteTable`, among others, in "Ensuring idempotency in Amazon EC2 API requests"), set one.
   A retry with the same token doesn't act twice.
@@ -1834,7 +1873,7 @@ Leave out anything from the request that could be a secret.
 
 ### Eventual consistency
 
-**infrata:**
+**infrena:**
 
 - **`Read` returning `(nil, nil)` means gone.** The adapter turns it into a nil state
   (`adapter.go:161-163`), `readOne` records that as an observation of absence
@@ -1913,7 +1952,7 @@ attribute:
   `{Kind: value.KindString, Optional: true, Computed: true, ForceNew: true}`. A user may name a zone,
   AWS picks one otherwise, and an unset zone is never diffed, so it never forces a replacement
   ([section 3](#optional-with-computed-the-cloud-picks-unless-configuration-says) reproduces exactly
-  this). Before infrata v0.3.0 the only honest choices were `Required` or `Computed`, and each took a
+  this). Before infrena v0.3.0 the only honest choices were `Required` or `Computed`, and each took a
   choice away from the user. Keep plain `Computed` for what nobody may set, such as IDs and ARNs.
   Likewise, when `DescribeVpcs` returns no tags, leave
   `tags` out of the state `Read` returns. Returning it as `{}` makes every untagged VPC plan
@@ -1921,7 +1960,7 @@ attribute:
 
 #### Requirements are where a real cloud leans hardest
 
-**infrata:** a `schema.Requirement` has a `Name`, the `Types` that satisfy it, `Optional` and a
+**infrena:** a `schema.Requirement` has a `Name`, the `Types` that satisfy it, `Optional` and a
 `Description` (`pkg/schema/definition.go:13-18`). `checkRequirements` checks every non-optional
 requirement before any provider is called. It reports `"<address>" is missing required <name>`, the
 description, `Satisfied by a resource of type: …`, and suggests adding one
@@ -1947,12 +1986,12 @@ same account, and nothing more.**
   that has state would make `validate` either weaker or state-dependent.
 
 Both remaining limits would be answered by the same change — letting a `Requirement` name the
-attribute it is satisfied by — and infrata is deliberately not guessing at that vocabulary before a
+attribute it is satisfied by — and infrena is deliberately not guessing at that vocabulary before a
 real cloud plugin says what it needs.
 
 **Recommendation: `Requirements` is a pre-flight hint, not the correctness mechanism.** Declare what
 AWS itself would reject a create without, but also model the dependency as a `Required` reference
-attribute (`vpc_id: ${vpc.id}`) on every resource that needs one — that reference is what infrata
+attribute (`vpc_id: ${vpc.id}`) on every resource that needs one — that reference is what infrena
 actually enforces end to end. A plugin that treats `Requirements` alone as the guarantee gets an
 under-specified reference past `validate`: a subnet whose requirement is satisfied by *some* VPC in
 its account can still carry a `vpc_id` pointing at the wrong one, or a literal ID instead of a
@@ -1999,7 +2038,7 @@ Error: "private_a" is missing required vpc
 instance name, position and description would come from the project and the schema.)
 
 Use `Types` with more than one entry where AWS really does accept alternatives. Where users commonly
-point at infrastructure they don't manage with infrata, such as an existing VPC passed in as a plain
+point at infrastructure they don't manage with infrena, such as an existing VPC passed in as a plain
 ID, `Optional: true` is the honest choice. It records the requirement for `explain` without refusing
 a valid project, at the cost of the early error.
 
@@ -2021,7 +2060,7 @@ a valid project, at the cost of the early error.
 - **Layer 2 through `pkg/plugintest`**, exactly as the fake does. It proves the host accepts your
   schemas (the `aws.` prefix, `region`'s kind, the reserved names) and that classification survives
   the pipe.
-- **Layer 3: one binary-level suite behind a build tag** (`//go:build e2e`), running a real `infrata`
+- **Layer 3: one binary-level suite behind a build tag** (`//go:build e2e`), running a real `infrena`
   against your built binary, pointed at the fake endpoint or double.
 - **An optional live suite against a real account**, behind **its own** build tag (for example
   `//go:build live`) and its own credentials. Never run it in the default `go test ./...`. Give it

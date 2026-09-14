@@ -77,7 +77,7 @@ func TestShouldFailIgnoresOtherOpsAndAddresses(t *testing.T) {
 }
 
 // TestSaveIsAtomicAndPrivate: mode 0600, and no temporary file left behind —
-// the same discipline infrata applies to its own state file.
+// the same discipline infrena applies to its own state file.
 func TestSaveIsAtomicAndPrivate(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "fake-cloud.json")

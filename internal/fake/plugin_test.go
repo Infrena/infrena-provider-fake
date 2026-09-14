@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/value"
 )
 
 // cloudPathOf builds an instance and reports which file it opens, which is the only
@@ -54,7 +54,7 @@ func TestTwoInstancesNamingNoCloudGetDifferentFiles(t *testing.T) {
 }
 
 // TestTheImplicitInstanceKeepsTheHistoricalPath. A project with no `providers:` block has one
-// implicit instance, named after the PLUGIN (infrata internal/providers/prepare.go). providers/test
+// implicit instance, named after the PLUGIN (infrena internal/providers/prepare.go). providers/test
 // special-cased "test"; renamed to fake, the implicit instance would otherwise open
 // fake-cloud-fake.json — an empty cloud — and the first plan would propose recreating
 // everything the project already has. "" is the same instance before a name is assigned.

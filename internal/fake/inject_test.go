@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infrata/infrata/pkg/address"
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/resource"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/address"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/value"
 )
 
 func TestInjectedFailureIsClassified(t *testing.T) {
@@ -107,10 +107,10 @@ func TestNthFailureRuleSurvivesAcrossOperations(t *testing.T) {
 }
 
 // TestFailureRuleReachesAllThreeClassifications drives ClassifyError from the
-// cloud file, the way a person or infrata's own executor tests would.
+// cloud file, the way a person or infrena's own executor tests would.
 //
 // The rule once carried a `Retryable bool`, which maps onto exactly two of the
-// three provider.Retryability constants. infrata's executor treats all three
+// three provider.Retryability constants. infrena's executor treats all three
 // differently, so with a boolean a third of its retry behaviour could never be
 // exercised — and the fake provider is the only thing that will ever produce
 // these errors.
@@ -222,7 +222,7 @@ func TestOperationsOverlapRatherThanSerialise(t *testing.T) {
 // begin() loads the cloud, advances failure bookkeeping and saves on every
 // operation — the read path included — and each CRUD method then saves again.
 // With no guard, concurrent callers interleave and lose each other's writes.
-// infrata's refresh reads every resource in state concurrently, so concurrent
+// infrena's refresh reads every resource in state concurrently, so concurrent
 // callers are the normal case, not an edge.
 func TestConcurrentCreatesDoNotLoseUpdates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fake-cloud.json")

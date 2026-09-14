@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# build-release VERSION OUTDIR: cross-compile infrata-plugin-fake for every platform plugin.yaml
-# lists, archived under the name `infrata plugins install` constructs (infrata PLAN.md §31.2):
-# infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz, and .zip for windows.
+# build-release VERSION OUTDIR: cross-compile infrena-plugin-fake for every platform plugin.yaml
+# lists, archived under the name `infrena plugins install` constructs (infrena PLAN.md §31.2):
+# infrena-plugin-fake_<version>_<goos>_<goarch>.tar.gz, and .zip for windows.
 #
 # PLATFORMS (space-separated GOOS/GOARCH) overrides the manifest's list, so a test can build two
 # platforms instead of eight.
@@ -22,11 +22,11 @@ fi
 for platform in $platforms; do
   goos="${platform%/*}"
   goarch="${platform#*/}"
-  name="infrata-plugin-fake"
+  name="infrena-plugin-fake"
   if [[ "$goos" == windows ]]; then name="$name.exe"; fi
   goarm=""
-  if [[ "$goarch" == arm ]]; then goarm=7; fi   # still named _linux_arm: install builds the name from <goos>_<goarch> (infrata PLAN.md §31.2)
-  stem="infrata-plugin-fake_${version}_${goos}_${goarch}"
+  if [[ "$goarch" == arm ]]; then goarm=7; fi   # still named _linux_arm: install builds the name from <goos>_<goarch> (infrena PLAN.md §31.2)
+  stem="infrena-plugin-fake_${version}_${goos}_${goarch}"
 
   work="$(mktemp -d)"
   mkdir "$work/$stem"
@@ -35,8 +35,8 @@ for platform in $platforms; do
   # paths. Not -s -w: a stack trace is the whole diagnostic when a plugin panics.
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" \
     go build -trimpath \
-      -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=${version}" \
-      -o "$work/$stem/$name" ./cmd/infrata-plugin-fake
+      -ldflags "-X github.com/infrena/infrena-provider-fake/internal/fake.Version=${version}" \
+      -o "$work/$stem/$name" ./cmd/infrena-plugin-fake
   cp README.md plugin.yaml "$work/$stem/"
   if [[ "$goos" == windows ]]; then
     (cd "$work" && zip -qr "$out/$stem.zip" "$stem")

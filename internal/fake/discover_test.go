@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/infrata/infrata/pkg/provider"
+	"github.com/infrena/infrena/pkg/provider"
 )
 
 // writeCloud writes a cloud file directly, so a test can describe
@@ -92,7 +92,7 @@ func TestDiscoverIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestDiscoverFiltersByType. `infrata discover aws.rds` asks one question of a
+// TestDiscoverFiltersByType. `infrena discover aws.rds` asks one question of a
 // large account, and answering it by fetching everything and discarding most is
 // how discovery becomes too slow to use.
 func TestDiscoverFiltersByType(t *testing.T) {

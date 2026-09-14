@@ -1,17 +1,22 @@
-# plugin.yaml: what this plugin is, and what it works with. infrata PLAN.md §31.2.
+# plugin.yaml: what this plugin is, and what it works with. infrena PLAN.md §31.2.
 # Read at a release TAG, never at the default branch, which describes unreleased code.
-manifest: 1
+# manifest: 2 since the Infrata -> Infrena rename, which renamed the floor key `infrata:` to
+# `infrena:`. Releases up to v0.2.0 were tagged with `manifest: 1` and stay readable as they are.
+manifest: 2
 name: fake
 version: 0.2.0
 # The protocol THIS RELEASE'S binary speaks: for an SDK-built plugin, exactly one version, the
-# pluginproto.Version of the infrata go.mod requires. It changes in the same commit as that require
+# pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
 # and a later host protocol bump forces no re-release: the host keeps accepting older versions.
 protocol: [2]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
-description: A fake provider for testing infrata without a cloud account.
-# The oldest infrata release CI verifies this plugin against: go.mod's require, which ci.yml
-# builds and runs the e2e suite with. Nothing refuses a mismatched host at runtime yet; infrata
-# checks this at install (PLAN.md §31.3), which is designed but not built.
-infrata: ">= 0.3.0"
-source: https://github.com/infrata/infrata-provider-fake
+description: A fake provider for testing infrena without a cloud account.
+# The oldest infrena release this plugin works with: 0.4.0, the first release under the Infrena
+# name. Every earlier release is infrata, with a different module path, CLI and plugin binary name,
+# so no build of this plugin can pair with one. go.mod's require moves to v0.4.0 once that tag
+# exists, and from then on the floor matches the release CI builds and runs the e2e suite with.
+# Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
+# which is designed but not built.
+infrena: ">= 0.4.0"
+source: https://github.com/infrena/infrena-provider-fake
