@@ -14,11 +14,9 @@ no network and no credentials.
 ## Build and install
 
 A local build uses a sibling checkout of infrena: infrena stays private until it is feature
-complete, so fetching the module needs credentials a casual build shouldn't. Once released, `go.mod`
-requires a tagged infrena and CI builds against exactly that tag. **Right now it requires
-`github.com/infrena/infrena v0.0.0`, a placeholder:** no release exists under the new name yet
-(v0.4.0 will be the first), so the sibling checkout is the only way to build. Lay the two
-repositories out side by side:
+complete, so fetching the module needs credentials a casual build shouldn't. `go.mod` requires
+infrena v0.4.0, the first release under the Infrena name, and CI builds against exactly that tag.
+Lay the two repositories out side by side:
 
 ```
 some-directory/
@@ -27,8 +25,7 @@ some-directory/
 ```
 
 `go.mod`'s `replace github.com/infrena/infrena => ../infrena` assumes exactly that layout. It builds
-whatever that checkout holds; until the first renamed release is tagged, that has to be infrena's
-`main`. Once `go.mod` names a release, check that tag out (`git -C ../infrena checkout v0.4.0`) when
+whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.4.0`) when
 you want a local result that means what CI's does. Then:
 
 ```bash
@@ -473,21 +470,9 @@ and names the fix, which also restores them after you bump the infrena `require`
 scripts/ci-use-infrena-tag sum
 ```
 
-**Until the first renamed release, the tag job is red on purpose.** `go.mod` requires the `v0.0.0`
-placeholder, which names no tag, so there is nothing to fetch, check out or pin, and the job's first
-step stops with:
-
-```
-$ scripts/ci-use-infrena-tag version
-ci-use-infrena-tag: go.mod requires github.com/infrena/infrena v0.0.0: no tagged release to test against yet.
-v0.0.0 is the placeholder until the first renamed release (v0.4.0) is tagged. Bump go.mod's require to it, then run: scripts/ci-use-infrena-tag sum
-$ echo $?
-1
-```
-
-For the same reason `TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` skips, saying so, and the
-compliance suite checks the `infrena:` floor only against a pinned release. Bumping `require` to
-v0.4.0 and running `scripts/ci-use-infrena-tag sum` ends all three.
+`scripts/ci-use-infrena-tag version` refuses a `require` that is not a release tag — a
+pseudo-version, or `v0.0.0`, which names no release — so the tag job stops at its first step rather
+than checking out the wrong infrena.
 
 ## Releasing
 
@@ -512,8 +497,8 @@ platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin
 description: A fake provider for testing infrena without a cloud account.
 # The oldest infrena release this plugin works with: 0.4.0, the first release under the Infrena
 # name. Every earlier release is infrata, with a different module path, CLI and plugin binary name,
-# so no build of this plugin can pair with one. go.mod's require moves to v0.4.0 once that tag
-# exists, and from then on the floor matches the release CI builds and runs the e2e suite with.
+# so no build of this plugin can pair with one. go.mod requires v0.4.0 too, so the floor is the
+# release CI builds and runs the e2e suite with.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
 infrena: ">= 0.4.0"

@@ -283,13 +283,20 @@ func TestTwoInstancesKeepSeparateClouds(t *testing.T) {
 
 // TestTheInfrenaUnderTestSpeaksTheManifestsProtocol applies infrena PLAN.md §31.2's compatibility rules to the
 // infrena this suite built, reading what that build says it speaks from `infrena version --output`.
-// The release rule (AllowsInfrena) exempts only a host reporting 0.0.0. Since the engine has tags, a
-// plain `go build` of its checkout is not that: Go stamps the module version from git, so a clean
-// checkout AT a tag reports that version, and one commit past it reports a pseudo-version such as
-// 0.3.1-0.<time>-<hash>, which compares as 0.3.1 (measured 2026-09-13 at v0.2.0, and again
-// 2026-09-14 on infrena main e2be8bf, which is past the infrata-era v0.3.0 tag). So this checks
-// plugin.yaml's `infrena:` floor against the release CI's tag job builds its host from, and against
-// main in the advisory job — except while go.mod pins no renamed release; see below.
+//
+// The `infrena:` floor is checked one of two ways, by what the host says it is:
+//
+//   - A RELEASE (no pre-release suffix), such as the host CI's tag job builds from the tag go.mod
+//     requires: the floor must admit it outright. A floor above the tested release fails here.
+//   - A DEVELOPMENT BUILD (a suffix): infrena's own rule, pluginmanifest's AllowsInfrena, and nothing
+//     reimplemented here. It exempts a build parsing as 0.0.0 (`0.0.0-dev`, from `go build` with no
+//     VCS stamp). It does NOT exempt a pseudo-version: Go stamps a checkout one commit past a tag as,
+//     say, 0.4.1-0.<time>-<hash>, and semver ignores the suffix, so that compares as 0.4.1 and the
+//     floor admits it exactly when the build descends from a release the floor admits. Infrena `main`
+//     past v0.4.0 therefore passes, and a checkout older than the floor's release fails, as it should.
+//
+// Go stamps a clean checkout AT a tag with that tag, so a plain `go build` of one is a release here
+// (measured 2026-09-14: infrena main at e2be8bf, tagged v0.4.0, reports 0.4.0).
 func TestTheInfrenaUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 	if skipReason != "" {
 		t.Skip(skipReason)
@@ -333,31 +340,28 @@ func TestTheInfrenaUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 	if !m.SpeaksProtocol(protocols) {
 		t.Errorf("plugin.yaml speaks protocol %v; infrena %s speaks %v", m.Protocol, info.Version, protocols)
 	}
-	// The floor is checked against a host of the release go.mod pins. While go.mod requires the
-	// v0.0.0 placeholder (step 1 of the Infrata -> Infrena rename), no renamed release exists and
-	// the floor names the first one, 0.4.0, so a host built from infrena main cannot satisfy it:
-	// it reports a pseudo-version past v0.3.0, an infrata-era tag. What CAN be checked is that the
-	// host really is such an unreleased build, and that the floor refuses the last infrata release.
-	// Step 3 pins v0.4.0, and from then on the full check below applies.
-	if required := requiredInfrena(t); required == "v0.0.0" {
-		host, err := semver.Parse(info.Version)
-		if err != nil {
-			t.Fatalf("infrena version %q does not parse: %v", info.Version, err)
+	host, err := semver.Parse(info.Version)
+	if err != nil {
+		t.Fatalf("infrena version %q does not parse: %v", info.Version, err)
+	}
+	development := host.Pre != "" || (host.Major == 0 && host.Minor == 0 && host.Patch == 0)
+	if !development {
+		if !m.Infrena.Allows(host) {
+			t.Fatalf("plugin.yaml's infrena constraint %q does not allow infrena %s, a release", m.Infrena, info.Version)
 		}
-		if host.Pre == "" {
-			t.Errorf("go.mod pins no renamed release (v0.0.0), but the host reports release %s; "+
-				"if a renamed release exists, bump go.mod's require to it", info.Version)
+		if required := strings.TrimPrefix(requiredInfrena(t), "v"); required != host.String() {
+			t.Logf("note: the host is release %s but go.mod requires %s; CI's tag job pairs them", host, required)
 		}
-		if m.AllowsInfrena("0.3.0") {
-			t.Errorf("plugin.yaml's infrena constraint %q allows 0.3.0, the last infrata-named release", m.Infrena)
-		}
-		t.Logf("go.mod requires v0.0.0: floor %q not checked against the unreleased host %s until a renamed release is pinned",
-			m.Infrena, info.Version)
+		t.Logf("floor check, release branch: %q allows infrena %s", m.Infrena, info.Version)
 		return
 	}
 	if !m.AllowsInfrena(info.Version) {
-		t.Errorf("plugin.yaml's infrena constraint %q does not allow infrena %s", m.Infrena, info.Version)
+		t.Fatalf("plugin.yaml's infrena constraint %q does not allow the development build %s: it is not "+
+			"0.0.0, and as a pseudo-version it compares as %d.%d.%d, so it predates the floor's release",
+			m.Infrena, info.Version, host.Major, host.Minor, host.Patch)
 	}
+	t.Logf("floor check, development branch: AllowsInfrena(%q) admits %s under infrena's development-build rule",
+		info.Version, m.Infrena)
 }
 
 // requiredInfrena reads the infrena version this module's go.mod requires, from the file alone.

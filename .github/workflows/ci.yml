@@ -54,8 +54,8 @@ jobs:
       #
       # The assignment is separate from the echo on purpose: a failing command substitution inside
       # echo's argument does not fail the step, which would write an empty version and let the
-      # checkout below fall back to the default branch. While go.mod requires the v0.0.0 placeholder
-      # (no renamed release yet), this step fails here, naming the reason.
+      # checkout below fall back to the default branch. A require that is not a release tag fails here,
+      # naming the reason.
       - name: Read the infrena release go.mod requires
         id: infrena
         run: |

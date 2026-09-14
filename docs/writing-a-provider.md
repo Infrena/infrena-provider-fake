@@ -1122,14 +1122,9 @@ require github.com/infrena/infrena v0.4.0
 replace github.com/infrena/infrena => ../infrena
 ```
 
-**Mid-rename, there is no release to require yet.** Tags `v0.1.0` to `v0.3.0` were cut before the
+**v0.4.0 is the oldest release you can require.** Tags `v0.1.0` to `v0.3.0` were cut before the
 rename and declare the old module path, `github.com/infrata/infrata`, so none of them satisfies a
-require on `github.com/infrena/infrena`. `v0.4.0` will be the first that does, and until it is tagged
-this repository's `go.mod` requires `github.com/infrena/infrena v0.0.0`, a placeholder that names no
-release, and builds only through the `replace`. Its tooling treats the placeholder explicitly rather
-than pretending: `scripts/ci-use-infrena-tag` refuses it by name, so the gating CI job is red, and
-the `go.sum` guard below skips with a message saying why. Bumping the require to `v0.4.0` and running
-`scripts/ci-use-infrena-tag sum` ends both.
+require on `github.com/infrena/infrena`.
 
 `../infrena` is the directory `git clone` of infrena creates, so a fresh clone of both repositories
 side by side builds with no extra setup. Nothing else is needed from infrena. The SDK and protocol use
@@ -1189,10 +1184,7 @@ Three things that are easy to get wrong:
   missing and says how to restore them (`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` in
   `scripts/scripts_test.go`; the restore is `scripts/ci-use-infrena-tag sum`, which runs `go mod tidy`
   on a scratch copy of `go.mod` without the `replace`). A no-argument `go mod download` records only
-  the `/go.mod` hashes, not enough to build. While `go.mod` requires the `v0.0.0` placeholder the
-  guard skips, because there is nothing to pin; `TestTheGoSumGuardSkipsOnlyTheUnpinnedPlaceholder`
-  proves that it skips for that version alone and still fails for a real one whose hashes are
-  missing.
+  the `/go.mod` hashes, not enough to build.
 - **Read the version from `go.mod`, not from `go list -m`.** `go mod edit -json` reads the file alone,
   so it works before any infrena checkout exists; `go list -m` loads the module graph, which with the
   `replace` present needs `../infrena`. Use that one read for both the module and the ref of the e2e
@@ -1254,8 +1246,8 @@ platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin
 description: A fake provider for testing infrena without a cloud account.
 # The oldest infrena release this plugin works with: 0.4.0, the first release under the Infrena
 # name. Every earlier release is infrata, with a different module path, CLI and plugin binary name,
-# so no build of this plugin can pair with one. go.mod's require moves to v0.4.0 once that tag
-# exists, and from then on the floor matches the release CI builds and runs the e2e suite with.
+# so no build of this plugin can pair with one. go.mod requires v0.4.0 too, so the floor is the
+# release CI builds and runs the e2e suite with.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
 infrena: ">= 0.4.0"
@@ -1368,16 +1360,19 @@ your own release gate makes of it.
 isn't one. Go stamps the version from git: a clean checkout at `v0.2.0` reports `0.2.0`, and one commit
 past it reports `0.2.1-0.<time>-<hash>`, which compares as `0.2.1`. Measured 2026-09-13; a checkout at
 `v0.3.0` likewise reported `infrata 0.3.0 (45deb30, …)` (2026-09-14, before the rename), and infrena
-`main` just after the rename reports `infrena 0.3.1-0.20260914150359-e2be8bf36135 (e2be8bf, …)`,
-which compares as `0.3.1`.
+`main` just after the rename, before `v0.4.0` was tagged on that same commit, reported
+`infrena 0.3.1-0.20260914150359-e2be8bf36135 (e2be8bf, …)`, which compares as `0.3.1`. Once tagged, the
+same checkout reports `infrena 0.4.0 (e2be8bf, …)`.
 
 **Recommendation:** make the floor the release your CI builds against, and check it there. The e2e
-test `TestTheInfrenaUnderTestSpeaksTheManifestsProtocol` applies `AllowsInfrena` to a host built from
-the tag `go.mod` requires, so a floor above the tested release fails CI. This repository's
-`infrena: ">= 0.4.0"` is the first renamed release, which `go.mod` will require once it is tagged.
-Until then `go.mod` requires the `v0.0.0` placeholder, no host can satisfy the floor (`main` compares
-as `0.3.1`, above), and the e2e test instead checks that the host is an unreleased build and that the
-floor refuses `0.3.0`, logging that the full check waits for a pinned release.
+test `TestTheInfrenaUnderTestSpeaksTheManifestsProtocol` reads the host's version and checks the floor
+one of two ways. A host reporting a release (no suffix), such as CI's host built from the tag `go.mod`
+requires, must satisfy the floor outright, so a floor above the tested release fails CI. A host
+reporting a suffix is a development build, and gets `AllowsInfrena`'s own rule rather than a second
+copy of it: `0.0.0-dev` is exempt, and a pseudo-version compares as its `MAJOR.MINOR.PATCH`, so it
+passes exactly when it was built after a release the floor admits (`0.4.1-0.<time>-<hash>` passes
+`>= 0.4.0`; a checkout from before `v0.4.0` fails). This repository's `infrena: ">= 0.4.0"` is the
+first renamed release, the one `go.mod` requires.
 `internal/fake/manifest_test.go` separately checks the floor refuses `0.3.x` and admits `0.4.0`.
 
 ### What it deliberately leaves out

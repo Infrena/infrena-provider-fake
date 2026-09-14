@@ -6,7 +6,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -219,10 +218,6 @@ func readFile(t *testing.T, path string) string {
 const (
 	// infrenaModule is the module whose hashes the guard is about.
 	infrenaModule = "github.com/infrena/infrena"
-	// unpinnedRelease is go.mod's placeholder require while no renamed infrena release exists
-	// (step 1 of the Infrata -> Infrena rename; see go.mod). It is not a release, so there is
-	// nothing to pin.
-	unpinnedRelease = "v0.0.0"
 	// syntheticRelease stands in for a real infrena release in the doctored module copies below.
 	// Nothing fetches it: `check` is offline and only reads go.mod and go.sum, so the fixtures stay
 	// valid whatever the repository's own go.mod requires.
@@ -254,36 +249,16 @@ func requiredInfrena(t *testing.T, dir string) string {
 	return ""
 }
 
-// goSumGuard is the body of TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds, against the module
-// in dir. It returns a non-empty skip reason while go.mod requires the unpinned placeholder, and
-// otherwise the result of `ci-use-infrena-tag check`. Split out so the test below can prove both
-// outcomes on doctored copies, which a test that merely calls t.Skip or t.Fatal could not.
-func goSumGuard(t *testing.T, dir string) (skip, out string, err error) {
-	t.Helper()
-	if v := requiredInfrena(t, dir); v == unpinnedRelease {
-		return fmt.Sprintf("go.mod requires %s %s: no renamed release pinned yet, so there are no "+
-			"hashes to guard. Step 3 of the rename (bump the require to the first renamed release, "+
-			"then run `scripts/ci-use-infrena-tag sum`) removes this skip.", infrenaModule, v), "", nil
-	}
-	out, err = run(t, []string{"FAKE_MODULE_DIR=" + dir}, "ci-use-infrena-tag", "check")
-	return "", out, err
-}
-
 // TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds is the guard for committed checksums, and
 // it is not dead weight. CI drops go.mod's `replace => ../infrena` and builds the tagged infrena
 // module under -mod=readonly, which needs go.sum to already hold that module's hashes: a hash
 // CI wrote for itself would verify nothing. But `go mod tidy` run locally, with the replace
 // present, strips infrena's hashes — so without this test a routine tidy passes every local
 // check and breaks only the next push. Here it breaks the next `go test ./...` instead, with the
-// restore command in the failure.
-//
-// It SKIPS, loudly, while go.mod requires v0.0.0: see goSumGuard, and
-// TestTheGoSumGuardSkipsOnlyTheUnpinnedPlaceholder for the proof that it skips nothing else.
+// restore command in the failure. TestCheckRefusesAGoSumThatTidyStripped proves the check it
+// runs fails for each line a tidy can strip.
 func TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds(t *testing.T) {
-	skip, out, err := goSumGuard(t, "..")
-	if skip != "" {
-		t.Skip(skip)
-	}
+	out, err := run(t, nil, "ci-use-infrena-tag", "check")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -310,66 +285,9 @@ func pinnedModuleCopy(t *testing.T) (dir, gosum string) {
 	return dir, gosum
 }
 
-// TestTheGoSumGuardSkipsOnlyTheUnpinnedPlaceholder. A guard that skips proves nothing unless it
-// skips for exactly one reason. Each case contradicts the others: the placeholder skips and the
-// script refuses it by name; a real version with its hashes passes; the same real version with
-// them stripped fails rather than skipping.
-func TestTheGoSumGuardSkipsOnlyTheUnpinnedPlaceholder(t *testing.T) {
-	t.Run("v0.0.0 skips, and the script refuses it by name", func(t *testing.T) {
-		dir, _ := pinnedModuleCopy(t)
-		cmd := exec.Command("go", "mod", "edit", "-require="+infrenaModule+"@"+unpinnedRelease)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("doctoring go.mod: %v\n%s", err, out)
-		}
-		skip, out, err := goSumGuard(t, dir)
-		if skip == "" {
-			t.Fatalf("the guard did not skip a go.mod requiring v0.0.0 (check said: %v)\n%s", err, out)
-		}
-		for _, want := range []string{"no renamed release pinned yet", "step 3", "scripts/ci-use-infrena-tag sum"} {
-			if !strings.Contains(strings.ToLower(skip), strings.ToLower(want)) {
-				t.Errorf("the skip message does not say %q:\n%s", want, skip)
-			}
-		}
-		for _, command := range []string{"version", "check"} {
-			out, err := run(t, []string{"FAKE_MODULE_DIR=" + dir}, "ci-use-infrena-tag", command)
-			if err == nil {
-				t.Fatalf("%s accepted a go.mod requiring v0.0.0:\n%s", command, out)
-			}
-			if !strings.Contains(out, "requires "+infrenaModule+" v0.0.0: no tagged release to test against yet") {
-				t.Errorf("%s's refusal does not say why:\n%s", command, out)
-			}
-		}
-	})
-	t.Run("a real version with its hashes passes", func(t *testing.T) {
-		dir, _ := pinnedModuleCopy(t)
-		skip, out, err := goSumGuard(t, dir)
-		if skip != "" {
-			t.Fatalf("the guard skipped a go.mod requiring %s: %s", syntheticRelease, skip)
-		}
-		if err != nil {
-			t.Fatalf("check refused a go.sum that carries every hash: %v\n%s", err, out)
-		}
-	})
-	t.Run("a real version with its hashes missing fails", func(t *testing.T) {
-		dir, gosum := pinnedModuleCopy(t)
-		stripped := strings.ReplaceAll(gosum, infrenaModule+" "+syntheticRelease, "example.com/other v1.0.0")
-		if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte(stripped), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		skip, out, err := goSumGuard(t, dir)
-		if skip != "" {
-			t.Fatalf("the guard skipped a go.mod requiring %s: %s", syntheticRelease, skip)
-		}
-		if err == nil {
-			t.Fatalf("check accepted a go.sum without %s's hashes:\n%s", syntheticRelease, out)
-		}
-	})
-}
-
 // TestCheckRefusesAGoSumThatTidyStripped. A go.sum passing proves nothing unless a stripped one
 // fails, so each case removes exactly the lines a tidy-with-replace can remove, from a copy pinned
-// to a real version (the repository's own go.mod may still require the unpinned placeholder).
+// to a synthetic release, so the fixture does not move when go.mod's require does.
 func TestCheckRefusesAGoSumThatTidyStripped(t *testing.T) {
 	pinned, gosum := pinnedModuleCopy(t)
 	gomod := readFile(t, filepath.Join(pinned, "go.mod"))
@@ -405,20 +323,36 @@ func TestCheckRefusesAGoSumThatTidyStripped(t *testing.T) {
 	}
 }
 
-// TestVersionRefusesARequireThatIsNotARelease. A pseudo-version or the old v0.0.0 placeholder
-// would make CI's infrena checkout ref meaningless, so it must stop at the first step.
+// TestVersionRefusesARequireThatIsNotARelease. A pseudo-version, or v0.0.0 (which names no release
+// and exists only behind a replace), would make CI's infrena checkout ref meaningless, so it must
+// stop at the first step. Each case contradicts the repository's own go.mod, which `version` accepts.
 func TestVersionRefusesARequireThatIsNotARelease(t *testing.T) {
-	gomod := strings.Replace(readRepoFile(t, "go.mod"),
-		"require github.com/infrena/infrena v", "require github.com/infrena/infrena v0.0.0-20260913000000-000000000000 // was v", 1)
-	if !strings.Contains(gomod, "v0.0.0-2026") {
-		t.Fatal("go.mod has no single-line `require github.com/infrena/infrena v…` to doctor")
+	if out, err := run(t, nil, "ci-use-infrena-tag", "version"); err != nil {
+		t.Fatalf("version refused the repository's own go.mod: %v\n%s", err, out)
 	}
-	dir := moduleCopy(t, gomod, readRepoFile(t, "go.sum"))
-	out, err := run(t, []string{"FAKE_MODULE_DIR=" + dir}, "ci-use-infrena-tag", "version")
-	if err == nil {
-		t.Fatalf("version accepted a pseudo-version require:\n%s", out)
-	}
-	if !strings.Contains(out, "not a release tag") {
-		t.Errorf("the refusal does not say why:\n%s", out)
+	for name, tc := range map[string]struct{ require, why string }{
+		"a pseudo-version": {"v0.0.0-20260913000000-000000000000", "not a release tag"},
+		"v0.0.0":           {"v0.0.0", "v0.0.0, which names no release"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, _ := pinnedModuleCopy(t)
+			cmd := exec.Command("go", "mod", "edit", "-require="+infrenaModule+"@"+tc.require)
+			cmd.Dir = dir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("doctoring go.mod: %v\n%s", err, out)
+			}
+			if v := requiredInfrena(t, dir); v != tc.require {
+				t.Fatalf("the doctored go.mod requires %s, not %s", v, tc.require)
+			}
+			for _, command := range []string{"version", "check"} {
+				out, err := run(t, []string{"FAKE_MODULE_DIR=" + dir}, "ci-use-infrena-tag", command)
+				if err == nil {
+					t.Fatalf("%s accepted a go.mod requiring %s:\n%s", command, tc.require, out)
+				}
+				if !strings.Contains(out, tc.why) {
+					t.Errorf("%s's refusal does not say %q:\n%s", command, tc.why, out)
+				}
+			}
+		})
 	}
 }

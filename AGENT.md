@@ -77,8 +77,7 @@ replace github.com/infrena/infrena => ../infrena
 ```
 
 v0.4.0 is the first release under the Infrena name; v0.3.0 and earlier were published as
-`github.com/infrata/infrata` and cannot satisfy a require on the new path. Until v0.4.0 is tagged,
-infrena-provider-fake's `go.mod` requires a `v0.0.0` placeholder and says why.
+`github.com/infrata/infrata` and cannot satisfy a require on the new path.
 
 Nothing else is needed: the SDK and everything it depends on is the standard library only, so
 there is no other third-party dependency to pull in.

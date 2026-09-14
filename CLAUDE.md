@@ -41,22 +41,14 @@ workflow that has published v0.1.0, v0.1.1 and v0.2.0. Those three predate the r
 old names: v0.2.0 was built against infrata v0.3.0, speaks protocol 2, is named
 `infrata-plugin-fake`, was the first cut through ci.yml's gate, and pairs only with infrata ≤ v0.3.0.
 
-**Mid-rename, step 1 of 3 (2026-09-14).** Infrata was renamed Infrena (a legal name collision). This
-repository has renamed everything (module `github.com/infrena/infrena-provider-fake`, binary
-`infrena-plugin-fake`, `INFRENA_*` variables, `manifest: 2` with `infrena: ">= 0.4.0"`) against
-infrena `main`, which already has module `github.com/infrena/infrena`. No renamed infrena release
-exists yet — tags v0.1.0–v0.3.0 declare the old module path — so `go.mod` requires the placeholder
-`github.com/infrena/infrena v0.0.0`, builds only through the `replace`, and go.sum carries no infrena
-hashes. Consequences, all deliberate: `scripts/ci-use-infrena-tag version|check|sum|use` refuse
-v0.0.0 by name, so ci.yml's gating `tag` job is RED until step 3;
-`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` skips with a message saying why
-(`TestTheGoSumGuardSkipsOnlyTheUnpinnedPlaceholder` proves it skips nothing else); and the e2e floor
-check only asserts that the host is an unreleased build and that the floor refuses 0.3.0. Step 2 is
-the engine tagging v0.4.0 (its CI builds this repository's `cmd/infrena-plugin-fake` from a sibling
-checkout); step 3 bumps `go.mod` to v0.4.0 and runs `scripts/ci-use-infrena-tag sum`, which ends all
-three. The new `INFRENA_CHECKOUT_TOKEN` secret is James's to set; the old `INFRATA_CHECKOUT_TOKEN`
-proved the path before the rename (ci.yml's first GitHub run 34797363934 green on both jobs; the
-release path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
+**Renamed (2026-09-14).** Infrata was renamed Infrena (a legal name collision): module
+`github.com/infrena/infrena-provider-fake`, binary `infrena-plugin-fake`, `INFRENA_*` variables, and
+`manifest: 2` with `infrena: ">= 0.4.0"`. `go.mod` requires infrena v0.4.0 (`e2be8bf`), the first
+release under `github.com/infrena/infrena`; tags v0.1.0–v0.3.0 declare the old path and cannot satisfy
+it, and go.sum carries the v0.4.0 hashes. No release of this plugin has been cut under the new name.
+CI uses the `INFRENA_CHECKOUT_TOKEN` secret; the old `INFRATA_CHECKOUT_TOKEN` is being retired. Before
+the rename it proved the path (ci.yml's first GitHub run 34797363934 green on both jobs; the release
+path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
 
 CI (`.github/workflows/ci.yml`, on push to `main`, pull requests, and called by `release.yml`) builds
 against the infrena RELEASE `go.mod` requires in its gating `tag` job, and against infrena `main` in
@@ -83,7 +75,7 @@ checkout pairs a host built from one infrena with an SDK compiled against anothe
 that: it drops the replace and builds the host from the same tag.)
 
 Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.4.0"` is
-the first renamed release, which `go.mod`'s require will match from step 3 and which is not enforced
+the first renamed release, which `go.mod`'s require matches and which is not enforced
 at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.3.x and admits 0.4.0 — and its
 `protocol: [2]` is exactly the `pluginproto.Version`
 that require's SDK speaks — the amended §31.2 defines `protocol:` as what this release's binary
@@ -91,8 +83,7 @@ speaks, so it changes in the same commit as the require, and `internal/fake/mani
 `scripts/release-check` both refuse a mismatch), `scripts/release-check`, `scripts/build-release`,
 `scripts/ci-use-infrena-tag`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
 
-**go.sum carries infrena's hashes on purpose** (from step 3; none exist for the v0.0.0 placeholder,
-and the infrata-path lines were removed in the rename). CI's tag job builds under `-mod=readonly`
+**go.sum carries infrena's hashes on purpose** (the infrata-path lines were removed in the rename). CI's tag job builds under `-mod=readonly`
 with the replace dropped, so it needs them, and a local `go mod tidy` (replace present) strips them.
 `TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` fails when that happens; restore with
 `scripts/ci-use-infrena-tag sum`, and run the same after bumping the infrena require (then raise
@@ -114,10 +105,8 @@ project's `plugins:` constraint or the release gate.
   checkout named `infrena` — what `git clone` creates — is required to build or test locally, and a
   local result reflects that checkout, not the required release. CI drops the replace
   (`scripts/ci-use-infrena-tag use`), which needs `GOPRIVATE`, the token, and the committed go.sum hashes.
-- Until step 3 of the rename, `go.mod` requires the `v0.0.0` placeholder: there is no tagged
-  infrena to build against, CI's gating `tag` job fails at its first step by design, and nothing
-  but the `replace` builds this module. Nothing here depends on the old `../infrata` path or names
-  (verified with fresh clones and no `infrata` directory present).
+- Nothing here depends on the old `../infrata` path or names (verified with fresh clones and no
+  `infrata` directory present).
 - Because infrena is private, `GOPRIVATE` also bypasses the checksum database: the committed go.sum
   hash is the only thing that would notice a pinned tag being moved.
 

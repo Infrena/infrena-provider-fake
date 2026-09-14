@@ -14,8 +14,8 @@ platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin
 description: A fake provider for testing infrena without a cloud account.
 # The oldest infrena release this plugin works with: 0.4.0, the first release under the Infrena
 # name. Every earlier release is infrata, with a different module path, CLI and plugin binary name,
-# so no build of this plugin can pair with one. go.mod's require moves to v0.4.0 once that tag
-# exists, and from then on the floor matches the release CI builds and runs the e2e suite with.
+# so no build of this plugin can pair with one. go.mod requires v0.4.0 too, so the floor is the
+# release CI builds and runs the e2e suite with.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
 infrena: ">= 0.4.0"
