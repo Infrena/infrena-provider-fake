@@ -47,16 +47,17 @@ func TestTheManifestDescribesThisPlugin(t *testing.T) {
 	}
 }
 
-// TestTheManifestFloorIsTheFirstRenamedRelease. Every infrena release before 0.4.0 was published
-// as infrata, under another module path, CLI and plugin binary name, so no build of this plugin can
-// pair with one. The floor must refuse the last of them and admit the first renamed release.
-// Checked with release versions, which AllowsInfrena does not exempt the way it does 0.0.0.
-func TestTheManifestFloorIsTheFirstRenamedRelease(t *testing.T) {
+// TestTheManifestFloorIsTheRequiredRelease. The floor is the release go.mod requires and CI tests,
+// infrena 0.5.0: the release whose grammar writes a variable as ${var.x}, which this repository's
+// examples use. It must refuse 0.4.x, which parses only the old ${x}, and every infrata-named
+// release before that, and admit 0.5.0. Checked with release versions, which AllowsInfrena does not
+// exempt the way it does 0.0.0.
+func TestTheManifestFloorIsTheRequiredRelease(t *testing.T) {
 	m := readManifest(t)
 	if m.Infrena.IsZero() {
 		t.Fatal("plugin.yaml has no infrena: floor, so it claims to work with infrata-named releases too")
 	}
-	for version, want := range map[string]bool{"0.3.0": false, "0.3.9": false, "0.4.0": true, "0.5.0": true} {
+	for version, want := range map[string]bool{"0.3.9": false, "0.4.0": false, "0.4.9": false, "0.5.0": true, "0.5.1": true} {
 		if got := m.AllowsInfrena(version); got != want {
 			t.Errorf("plugin.yaml's infrena: %q allows %s = %v, want %v", m.Infrena, version, got, want)
 		}

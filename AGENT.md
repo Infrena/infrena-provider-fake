@@ -71,13 +71,14 @@ feature complete, so fetching the module needs credentials. The `replace` points
 setup:
 
 ```
-require github.com/infrena/infrena v0.4.0
+require github.com/infrena/infrena v0.5.0
 
 replace github.com/infrena/infrena => ../infrena
 ```
 
-v0.4.0 is the first release under the Infrena name; v0.3.0 and earlier were published as
-`github.com/infrata/infrata` and cannot satisfy a require on the new path.
+v0.4.0 is the oldest release a require can name: it is the first under the Infrena name, and v0.3.0
+and earlier were published as `github.com/infrata/infrata`. v0.5.0 is the first whose configuration
+grammar writes a variable as `${var.x}`, the syntax these documents use.
 
 Nothing else is needed: the SDK and everything it depends on is the standard library only, so
 there is no other third-party dependency to pull in.
@@ -436,7 +437,7 @@ version: 1.2.0
 protocol: [2]
 platforms: [linux/amd64, linux/arm64, darwin/arm64, windows/amd64]
 description: A provider for Hetzner Cloud.
-infrena: ">= 0.4.0"
+infrena: ">= 0.5.0"
 source: https://github.com/example/infrena-plugin-hetzner
 ```
 
@@ -535,7 +536,9 @@ evidence, and AWS worked through as an example.
   `lifecycle: prevent_destroy: true` turns that plan into a refusal instead.
 - **There is no ambient region.** `DiscoverRequest` has no region field, and infrena seeds no
   `region` (or `account`) into scope — `region` is an ordinary variable name that a project declares
-  and sets the normal way, like `aws_region` in `docs/writing-a-provider.md` §14's worked example.
+  and sets the normal way, and reads as `${var.region}`, like `${var.aws_region}` in
+  `docs/writing-a-provider.md` §14's worked example. The only process variables are `environment`
+  and `project`, and they carry the prefix too: `${var.environment}`, `${var.project}`.
   The regions `Discover` scans come from a configuration key, such as `discover_regions` — keep it
   resolvable without an environment (a literal, a variable with a `default:`, or one set in
   `vars/default.yml`), because `discover` takes no environment; a value only an environment sets

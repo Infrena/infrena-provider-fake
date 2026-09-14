@@ -12,11 +12,11 @@ version: 0.2.0
 protocol: [2]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrena without a cloud account.
-# The oldest infrena release this plugin works with: 0.4.0, the first release under the Infrena
-# name. Every earlier release is infrata, with a different module path, CLI and plugin binary name,
-# so no build of this plugin can pair with one. go.mod requires v0.4.0 too, so the floor is the
-# release CI builds and runs the e2e suite with.
+# The oldest infrena release this plugin is tested with: 0.5.0, the release go.mod requires, so the
+# floor is the release CI builds and runs the e2e suite with. 0.5.0 changed the configuration
+# grammar (a variable is ${var.x}), and this repository's documented examples use it. Releases
+# before 0.4.0 are infrata, with a different module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
-infrena: ">= 0.4.0"
+infrena: ">= 0.5.0"
 source: https://github.com/infrena/infrena-provider-fake

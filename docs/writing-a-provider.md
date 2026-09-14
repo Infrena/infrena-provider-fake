@@ -19,6 +19,10 @@ first under the new one. This repository's plugin releases up to and including v
 `infrata-plugin-fake` and pair only with infrata v0.3.0 and earlier. Where this guide cites a
 pre-rename engine release or quotes its output, it keeps the name that release actually had.
 
+**A note on syntax.** Configuration examples use infrena v0.5.0's grammar: a variable is written
+`${var.x}`, and a bare first segment always names a resource, as in `${vpc.id}`. Projects written for
+v0.4.0 and earlier wrote a variable as `${x}`, which v0.5.0 refuses with an error naming the `var.` fix.
+
 Contents:
 
 1. [What a plugin is](#1-what-a-plugin-is)
@@ -1117,7 +1121,7 @@ at a checkout of infrena next to your plugin, for local work:
 
 ```
 // go.mod
-require github.com/infrena/infrena v0.4.0
+require github.com/infrena/infrena v0.5.0
 
 replace github.com/infrena/infrena => ../infrena
 ```
@@ -1244,13 +1248,13 @@ version: 0.2.0
 protocol: [2]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrena without a cloud account.
-# The oldest infrena release this plugin works with: 0.4.0, the first release under the Infrena
-# name. Every earlier release is infrata, with a different module path, CLI and plugin binary name,
-# so no build of this plugin can pair with one. go.mod requires v0.4.0 too, so the floor is the
-# release CI builds and runs the e2e suite with.
+# The oldest infrena release this plugin is tested with: 0.5.0, the release go.mod requires, so the
+# floor is the release CI builds and runs the e2e suite with. 0.5.0 changed the configuration
+# grammar (a variable is ${var.x}), and this repository's documented examples use it. Releases
+# before 0.4.0 are infrata, with a different module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
-infrena: ">= 0.4.0"
+infrena: ">= 0.5.0"
 source: https://github.com/infrena/infrena-provider-fake
 ```
 
@@ -1371,9 +1375,9 @@ requires, must satisfy the floor outright, so a floor above the tested release f
 reporting a suffix is a development build, and gets `AllowsInfrena`'s own rule rather than a second
 copy of it: `0.0.0-dev` is exempt, and a pseudo-version compares as its `MAJOR.MINOR.PATCH`, so it
 passes exactly when it was built after a release the floor admits (`0.4.1-0.<time>-<hash>` passes
-`>= 0.4.0`; a checkout from before `v0.4.0` fails). This repository's `infrena: ">= 0.4.0"` is the
-first renamed release, the one `go.mod` requires.
-`internal/fake/manifest_test.go` separately checks the floor refuses `0.3.x` and admits `0.4.0`.
+`>= 0.4.0`; a checkout from before `v0.4.0` fails). This repository's `infrena: ">= 0.5.0"` is the
+release `go.mod` requires, and the first whose grammar its examples parse under.
+`internal/fake/manifest_test.go` separately checks the floor refuses `0.4.x` and admits `0.5.0`.
 
 ### What it deliberately leaves out
 
@@ -1560,11 +1564,11 @@ and overrides it on any resource, including from a variable.
   does not know what a region IS for your cloud. (v0.2.0 still declared a `Region` field the host
   never set; v0.3.0 removed it, so a plugin that read it no longer compiles.)
 - **There is no ambient `region` (or `account`).** infrena seeds exactly two process variables into
-  every scope: `environment` and `project` (infrena `internal/variables/resolve.go`,
-  `ProcessVariables`; `PLAN.md` §6.3 and §12.1, amended 2026-09-13). `region` is an ordinary
-  variable name — declare it under `variables:` like any other, or use a differently-named one, as
-  the AWS example below does with `aws_region`. (Before v0.3.0, `region` was reserved but never
-  supplied.)
+  every scope: `environment` and `project`, written `${var.environment}` and `${var.project}` like
+  any other variable (infrena `internal/variables/resolve.go`, `ProcessVariables`; `PLAN.md` §6.3,
+  §10.5 and §12.1). `region` is an ordinary variable name — declare it under `variables:` like any
+  other and write `${var.region}`, or use a differently-named one, as the AWS example below does
+  with `${var.aws_region}`. (Before v0.3.0, `region` was reserved but never supplied.)
 
 What does work is **instance `defaults:`**. In `internal/compiler/schema.go:49-51`, compilation runs
 `applyInstanceDefaults`, then `applyDefaults` (the schema's own `Default`), then `checkRequired`.
@@ -1584,8 +1588,8 @@ resource's own value, then the instance's `defaults:`, then the schema default. 
 whole, not merged.
 
 Here is that ladder, run against this repository's fake plugin with `fake.database.size`, which has
-a schema default of `10`. The instance says `defaults: {size: ${db_size}}`, one database writes
-nothing, and one writes `size: 50`:
+a schema default of `10`. The instance says `defaults: {size: ${var.db_size}}`, one database writes
+nothing, and one writes `size: 50` (re-run against infrena v0.5.0):
 
 ```
 $ infrena plan dev --var db_size=20
@@ -1649,10 +1653,10 @@ variables:
 
 providers:
   - plugin: aws
-    profile: ${aws_profile}
+    profile: ${var.aws_profile}
     discover_regions: [us-east-1, eu-west-1]
     defaults:
-      region: ${aws_region}
+      region: ${var.aws_region}
 
 resources:
   vpc:
@@ -1661,15 +1665,20 @@ resources:
   dr_vpc:
     type: aws.vpc
     cidr: 10.1.0.0/16
-    region: ${dr_region}       # overridden per resource, from a variable
+    region: ${var.dr_region}   # overridden per resource, from a variable
 ```
+
+A reference can also reach inside a value: `${var.azs[0]}` is an entry of a list variable,
+`${var.tags.team}` a key of a map variable, and `${vpc.tags.Name}` a key inside a resource's map
+attribute (infrena v0.5.0, `PLAN.md` §10.5). An index is an integer literal only, and an
+out-of-range index or a missing key is a compile-time error, not a value known after apply.
 
 **This is infrena's current design: `plan`, `apply`, `refresh`, `destroy` and `import <env>` all
 resolve `providers:` against the environment named on the command line; `discover` alone has none to
 resolve it against.** `plan` and `apply` resolve it the ordinary way, through `compiler.Compile`.
 `refresh` and `destroy` — which never compile — build the instance through `compiler.VariableScope`
 (`internal/compiler/compile.go`), the same stages 1-4 `Compile` shares, handed the environment named
-on the command line, so `defaults: {region: ${aws_region}}` above works on all four. `refresh` and
+on the command line, so `defaults: {region: ${var.aws_region}}` above works on all four. `refresh` and
 `destroy` therefore accept `--var` and `--var-file`, which they used to refuse outright. `plan`/`apply`
 run against an environment removed from `environments:` but still holding state — an "orphaned"
 environment, §6.1 — take that same state-only path with an EMPTY environment, because the
@@ -1694,7 +1703,7 @@ makes it available to a command that never compiles — and why `import <env>`'s
 there to pass down all along.
 
 Checked against a built infrena with this repository's plugin, using `providers: [{plugin: fake,
-cloud: ${cloud_file}}]` with `cloud_file` set ONLY in `vars/dev.yml` (no `default:`, which every
+cloud: ${var.cloud_file}}]` with `cloud_file` set ONLY in `vars/dev.yml` (no `default:`, which every
 command resolves without an environment): `apply dev` created a resource, and — after hand-adding an
 untracked one to the cloud file — `import dev fake.network.net-77 --generate` resolved `cloud_file`
 from `vars/dev.yml` and imported it, with no `--var` needed. Bare `discover` — no environment to

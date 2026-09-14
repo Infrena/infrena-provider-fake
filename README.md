@@ -11,11 +11,15 @@ no network and no credentials.
 > v0.2.0 carry the old names and pair only with infrata v0.3.0 and earlier; this repository's
 > `main` pairs only with infrena.
 
+> **Syntax.** Configuration examples here use infrena v0.5.0's grammar, where a variable is written
+> `${var.x}`; projects written for v0.4.0 and earlier wrote `${x}`. A resource attribute such as
+> `${network.id}` is spelled the same in both.
+
 ## Build and install
 
 A local build uses a sibling checkout of infrena: infrena stays private until it is feature
 complete, so fetching the module needs credentials a casual build shouldn't. `go.mod` requires
-infrena v0.4.0, the first release under the Infrena name, and CI builds against exactly that tag.
+infrena v0.5.0, and CI builds against exactly that tag.
 Lay the two repositories out side by side:
 
 ```
@@ -25,7 +29,7 @@ some-directory/
 ```
 
 `go.mod`'s `replace github.com/infrena/infrena => ../infrena` assumes exactly that layout. It builds
-whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.4.0`) when
+whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.5.0`) when
 you want a local result that means what CI's does. Then:
 
 ```bash
@@ -495,13 +499,13 @@ version: 0.2.0
 protocol: [2]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrena without a cloud account.
-# The oldest infrena release this plugin works with: 0.4.0, the first release under the Infrena
-# name. Every earlier release is infrata, with a different module path, CLI and plugin binary name,
-# so no build of this plugin can pair with one. go.mod requires v0.4.0 too, so the floor is the
-# release CI builds and runs the e2e suite with.
+# The oldest infrena release this plugin is tested with: 0.5.0, the release go.mod requires, so the
+# floor is the release CI builds and runs the e2e suite with. 0.5.0 changed the configuration
+# grammar (a variable is ${var.x}), and this repository's documented examples use it. Releases
+# before 0.4.0 are infrata, with a different module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
-infrena: ">= 0.4.0"
+infrena: ">= 0.5.0"
 source: https://github.com/infrena/infrena-provider-fake
 ```
 
@@ -509,8 +513,8 @@ source: https://github.com/infrena/infrena-provider-fake
 a version 2 manifest, and `infrena:` in a version 1 one, so the key and the format version move
 together.
 
-`infrena: ">= 0.4.0"` names the first release under the new name. Once `go.mod` requires that
-release it is also the one CI tests this plugin against. Today it is documentation and an input to
+`infrena: ">= 0.5.0"` names the release `go.mod` requires, so it is also the one CI tests this
+plugin against, and the first whose grammar this README's examples parse under. Today it is documentation and an input to
 the compliance suite, not a runtime check: infrena will refuse a plugin whose floor the running build
 fails at `infrena plugins install`, which is not built yet.
 

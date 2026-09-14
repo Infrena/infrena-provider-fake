@@ -43,12 +43,20 @@ old names: v0.2.0 was built against infrata v0.3.0, speaks protocol 2, is named
 
 **Renamed (2026-09-14).** Infrata was renamed Infrena (a legal name collision): module
 `github.com/infrena/infrena-provider-fake`, binary `infrena-plugin-fake`, `INFRENA_*` variables, and
-`manifest: 2` with `infrena: ">= 0.4.0"`. `go.mod` requires infrena v0.4.0 (`e2be8bf`), the first
-release under `github.com/infrena/infrena`; tags v0.1.0–v0.3.0 declare the old path and cannot satisfy
-it, and go.sum carries the v0.4.0 hashes. No release of this plugin has been cut under the new name.
+`manifest: 2`. infrena v0.4.0 (`e2be8bf`) was the first release under `github.com/infrena/infrena`;
+tags v0.1.0–v0.3.0 declare the old path and cannot satisfy a require on it. No release of this plugin
+has been cut under the new name.
 CI uses the `INFRENA_CHECKOUT_TOKEN` secret; the old `INFRATA_CHECKOUT_TOKEN` is being retired. Before
 the rename it proved the path (ci.yml's first GitHub run 34797363934 green on both jobs; the release
 path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
+
+**Requires infrena v0.5.0 (`546cc2c`),** with `infrena: ">= 0.5.0"` and go.sum carrying the v0.5.0
+hashes; `pluginproto.Version` is still 2. v0.5.0 changed the configuration grammar (its `PLAN.md`
+§10.5): a variable is `${var.x}`, process variables included (`${var.environment}`,
+`${var.project}`); a bare first segment is always a resource (`${vpc.id}`, `${vpc.tags.Name}`); a bare
+`${x}` is a parse error that names the `var.` fix; and `var` is reserved as a resource name. Every
+live example here (README, AGENT.md, the guide, `e2e/testdata/`) uses it. `docs/plans/` and
+`docs/proposals/` are historical records and keep the old `${x}` spelling on purpose.
 
 CI (`.github/workflows/ci.yml`, on push to `main`, pull requests, and called by `release.yml`) builds
 against the infrena RELEASE `go.mod` requires in its gating `tag` job, and against infrena `main` in
@@ -74,9 +82,9 @@ compiles against `../infrena` through `go.mod`'s `replace`, so pointing `INFRENA
 checkout pairs a host built from one infrena with an SDK compiled against another. CI's tag job avoids
 that: it drops the replace and builds the host from the same tag.)
 
-Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.4.0"` is
-the first renamed release, which `go.mod`'s require matches and which is not enforced
-at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.3.x and admits 0.4.0 — and its
+Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.5.0"` is
+the release `go.mod` requires, and is not enforced
+at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.4.x and admits 0.5.0 — and its
 `protocol: [2]` is exactly the `pluginproto.Version`
 that require's SDK speaks — the amended §31.2 defines `protocol:` as what this release's binary
 speaks, so it changes in the same commit as the require, and `internal/fake/manifest_test.go` and
