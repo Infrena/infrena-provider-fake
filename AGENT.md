@@ -71,7 +71,7 @@ feature complete, so fetching the module needs credentials. The `replace` points
 setup:
 
 ```
-require github.com/infrata/infrata v0.2.0
+require github.com/infrata/infrata v0.3.0
 
 replace github.com/infrata/infrata => ../infrata
 ```
@@ -227,7 +227,9 @@ Return `ErrNotImplemented` for a capability you do not offer, and say so in `Cap
 | Flag | Meaning | What it causes downstream |
 | --- | --- | --- |
 | `Required` | configuration must supply it | a clear error before anything is planned, naming the resource |
-| `Computed` | the cloud assigns it; configuration may not set it | shows as `(known after apply)` in a plan; a user who sets it gets "is computed and cannot be set" |
+| `Computed` | the cloud assigns it; configuration may not set it (unless also `Optional`) | shows as `(known after apply)` in a plan; a user who sets it gets "is computed and cannot be set" |
+| `Optional` | only with `Computed`: configuration **may** set it, and the cloud picks when it doesn't | set, an ordinary attribute, `ForceNew` included; unset, the provider's value is recorded and **never diffed**, so it never plans a change or a replacement. `explain` lists it under "Optional, chosen by the provider if unset" |
+| `Aliases` | other spellings configuration may use | matched case-insensitively and resolved to the canonical name by the compiler, so your plugin, state and the plan artifact only ever see the canonical name; plans and generated configuration display the first alias |
 | `Sensitive` | it is a secret | redacted everywhere — plans, reports, generated configuration |
 | `ForceNew` | changing it replaces rather than updates | the plan says *replace*, loudly, instead of *update* |
 | `Default` | a **datum** of the declared `Kind` | filled in when absent, marked `[default]`, and omitted from generated configuration |
@@ -238,6 +240,18 @@ a computed attribute (you report it).
 
 Get `ForceNew` right. It is the difference between a plan that says *update* and one that says
 *destroy and recreate*, and a user approves on the strength of that word.
+
+**`Optional` + `Computed` is for what configuration may set and the cloud otherwise chooses** — a
+subnet's availability zone, a VPC's DNS settings (infrata v0.3.0, `PLAN.md` §14.1). Without it, an
+attribute your `Read` always reports but configuration omits plans "removed from configuration" on
+every run, and a `ForceNew` one plans a replacement. Plain `Computed` is still right for what nobody
+may set: IDs, ARNs, endpoints. `Validate` refuses `Optional` without `Computed`, because every
+attribute that is not `Required` is already optional.
+
+**`Aliases` are input and display only.** The canonical name is the identity, so adding an alias in a
+later release changes no stored key. `Validate` refuses any two names on a type — attributes or
+aliases — that are equal ignoring case; that applies to a plugin that declares no aliases, too.
+Changing an alias needs a plugin release, because aliases travel with the schema.
 
 Get `Sensitive` right too, but know that the host does not depend on you for it: sensitivity is
 forced from the schema onto every value you return, so a forgotten flag on a value is caught. A
@@ -259,7 +273,10 @@ things has tests that pass when the host is broken.
 
 1. **Bookkeeping is never sent to you, so you cannot drop it.** You receive the type, the provider
    ID, the attributes, and the resource's address — the address as an *input*, for tagging, naming
-   or an error message. Dependencies, lifecycle flags and timestamps are never sent. On anything you
+   or an error message. Dependencies, lifecycle flags (`prevent_destroy`, `retain`, `ignore_changes`)
+   and timestamps are never sent. `lifecycle: ignore_changes: [...]`, which lets a user stop infrata
+   reverting attributes something else owns, is planner work on those flags: there is nothing for a
+   plugin to implement. On anything you
    return, everything but the provider ID and attributes — the address included — is ignored and
    re-attached by the host from what it already holds. You do not need to carry anything forward
    from `current` — and `current` is given to `Read` and `Update` so you can *use* it, not so you
@@ -273,7 +290,9 @@ things has tests that pass when the host is broken.
    returned key is an error naming it, rather than a mystery line in a plan.
 6. **Your schemas are validated on load**, including the type prefix rule and the reserved
    attribute names `prevent_destroy` and `retain` (which belong to infrata's lifecycle handling, so
-   no attribute may be called either).
+   no attribute may be called either; `ignore_changes` is not reserved, because unlike those two an
+   instance's `defaults:` does not accept it). `Validate` also refuses `Optional` without `Computed`
+   and any two attribute names or aliases that are equal ignoring case.
 7. **Error classification travels with your error.** See below.
 
 ---
@@ -400,7 +419,8 @@ that does not exist.
 - Report a real version from `Version()`, so a project can pin it (see "Constraints" below).
 - **The protocol version is the compatibility contract, not the Go types you compiled against.** A
   plugin built against an older SDK keeps working for as long as its protocol version is supported.
-  You do not have to rebuild for every infrata release.
+  You do not have to rebuild for every infrata release. (infrata v0.3.0 raised the protocol to 2, for
+  `Optional` and `Aliases` in schemas, and still accepts 1.)
 
 ### The manifest
 
@@ -410,20 +430,28 @@ Every plugin repository ships a `plugin.yaml` at its root (infrata `PLAN.md` §3
 manifest: 1
 name: hetzner
 version: 1.2.0
-protocol: [1]
+protocol: [2]
 platforms: [linux/amd64, linux/arm64, darwin/arm64, windows/amd64]
 description: A provider for Hetzner Cloud.
-infrata: ">= 0.2.0"
+infrata: ">= 0.3.0"
 source: https://github.com/example/infrata-plugin-hetzner
 ```
 
-`manifest` (checked first, before any other key), `name`, `version`, `protocol` (a list — the host
-accepts a set of supported versions), `platforms` (one `GOOS/GOARCH` per build you publish) and
+`manifest` (checked first, before any other key), `name`, `version`, `protocol` (the protocol
+versions **this release's binary** speaks — for an SDK-built plugin exactly one, the
+`pluginproto.Version` of the infrata you built against; never the host's whole `Supported` set, which
+would claim a protocol your binary cannot speak), `platforms` (one `GOOS/GOARCH` per build you publish) and
 `description` are required. `infrata` is optional — a `pkg/semver` constraint on the infrata
 releases this plugin is known to work with. Nothing enforces it at runtime today: infrata will check it
 at `infrata plugins install` (`PLAN.md` §31.3), which is designed but not built, so a mismatched host
 still loads your plugin. Absent means unconstrained, never write `">= 0.0.0"` to
 say that. `source` is optional, for a search result to link.
+
+`protocol` is fixed per release and never goes stale, and a host protocol bump forces no re-release,
+because the host keeps the old version in `Supported`. Your **next** release changes it in the same
+commit as its infrata `require` bump, because the rebuilt binary announces the new number (infrata
+`PLAN.md` §31.2, amended 2026-09-14). infrata-provider-fake's `internal/fake/manifest_test.go` and
+`scripts/release-check` each refuse a manifest whose `protocol` is not exactly what the binary speaks.
 
 It is read at the release **tag**, never the default branch: the file on `main` describes unreleased
 code, and reading it to judge `v1.2.0` would answer the wrong question once `main` has moved on to
@@ -442,7 +470,8 @@ trusting a hand check that a typo could pass.
 ### The release gate
 
 A release must **fail** unless three things agree: the git tag, `plugin.yaml`'s `version`, and the
-version the built binary actually reports in its handshake. A drift test that merely compares the
+version the built binary actually reports in its handshake. Check the manifest's `protocol` against
+the protocol that same handshake announces, too. A drift test that merely compares the
 manifest to the code is a weaker substitute — it is a test someone can delete, where the release
 assertion blocks the release outright.
 
@@ -553,9 +582,10 @@ evidence, and AWS worked through as an example.
 
 - [ ] Binary is named `infrata-plugin-<name>` and `Name()` returns `<name>`
 - [ ] Every resource type is prefixed `<name>.`
-- [ ] No attribute is called `prevent_destroy` or `retain`
-- [ ] `Computed` on everything the cloud assigns; `ForceNew` on everything that cannot be changed in
-      place; `Sensitive` on every secret
+- [ ] No attribute is called `prevent_destroy` or `retain`, and no two attribute names or aliases on
+      a type are equal ignoring case
+- [ ] `Computed` on everything the cloud assigns, with `Optional` added where configuration may set it
+      too; `ForceNew` on everything that cannot be changed in place; `Sensitive` on every secret
 - [ ] No schema holds a function; every `Default` is a datum of its declared `Kind`
 - [ ] `Create` and `Update` never return `(nil, nil)`
 - [ ] Values decode and encode through `pkg/value`, never a hand-rolled decoder that rejects a wire
@@ -572,11 +602,13 @@ evidence, and AWS worked through as an example.
       it into state; it does not print a diff)
 - [ ] Removing an optional attribute from configuration converges: apply, then `plan` shows no
       changes
-- [ ] Every attribute `Read` always reports is `Required`, `Computed` or given a matching default,
+- [ ] Every attribute `Read` always reports is `Required`, `Computed` (alone, or with `Optional`) or
+      given a matching default,
       and an empty optional value (such as no tags) is omitted rather than returned as `{}`:
       otherwise an unedited project plans a change on every run ("removed from configuration")
 - [ ] An absolute path in configuration is used as written
-- [ ] `plugin.yaml` is present, and its `name`/`version`/`protocol` agree with the code
-- [ ] The release gate refuses a tag, manifest and binary that disagree
+- [ ] `plugin.yaml` is present, its `name`/`version` agree with the code, and its `protocol` is
+      exactly `[pluginproto.Version]` of the infrata you build against
+- [ ] The release gate refuses a tag, manifest and binary that disagree, on `version` and on `protocol`
 - [ ] `Version()` reports something like `0.0.0-dev` in an unstamped build, never the manifest's
       version

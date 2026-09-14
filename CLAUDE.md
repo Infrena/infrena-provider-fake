@@ -39,7 +39,7 @@ removal, discover/import, failure/latency injection, a per-file lock, plugin con
 binary (`cmd/infrata-plugin-fake/`) are complete and documented, with a version-gated release
 workflow that has published v0.1.0 and v0.1.1. CI (`.github/workflows/ci.yml`, on push to `main`,
 pull requests, and called by `release.yml`) builds against the infrata RELEASE `go.mod` requires
-(v0.2.0) in its gating `tag` job, and against infrata `main` in an advisory `main` job. Its
+(v0.3.0) in its gating `tag` job, and against infrata `main` in an advisory `main` job. Its
 `INFRATA_CHECKOUT_TOKEN` secret, which lets it check out and fetch the private `infrata/infrata`
 repository, is configured; ci.yml has not had a real GitHub run yet. The implementation followed
 `docs/plans/2026-09-13-port-fake-provider.md`; read that plan (including its verification log and
@@ -63,15 +63,19 @@ compiles against `../infrata` through `go.mod`'s `replace`, so pointing `INFRATA
 checkout pairs a host built from one infrata with an SDK compiled against another. CI's tag job avoids
 that: it drops the replace and builds the host from the same tag.)
 
-Release plumbing: `plugin.yaml` (infrata `PLAN.md` §31.2; its `infrata: ">= 0.2.0"` matches `go.mod`'s
-require and is not enforced at runtime yet), `scripts/release-check`, `scripts/build-release`,
+Release plumbing: `plugin.yaml` (infrata `PLAN.md` §31.2; its `infrata: ">= 0.3.0"` matches `go.mod`'s
+require and is not enforced at runtime yet, and its `protocol: [2]` is exactly the `pluginproto.Version`
+that require's SDK speaks — the amended §31.2 defines `protocol:` as what this release's binary
+speaks, so it changes in the same commit as the require, and `internal/fake/manifest_test.go` and
+`scripts/release-check` both refuse a mismatch), `scripts/release-check`, `scripts/build-release`,
 `scripts/ci-use-infrata-tag`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
 
 **go.sum carries infrata's hashes on purpose.** CI's tag job builds under `-mod=readonly` with the
 replace dropped, so it needs them, and a local `go mod tidy` (replace present) strips them.
 `TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` fails when that happens; restore with
 `scripts/ci-use-infrata-tag sum`, and run the same after bumping the infrata require (then raise
-`plugin.yaml`'s `infrata:` floor to match). `Version` defaults to `"0.0.0-dev"` and is
+`plugin.yaml`'s `infrata:` floor to match, and set its `protocol:` to that release's
+`pluginproto.Version`). `Version` defaults to `"0.0.0-dev"` and is
 stamped only by `-ldflags` at release (Ruling R9), so an unstamped build cannot silently satisfy a
 project's `plugins:` constraint or the release gate.
 
@@ -89,7 +93,7 @@ project's `plugins:` constraint or the release gate.
   local result reflects that checkout, not the required release. CI drops the replace
   (`scripts/ci-use-infrata-tag use`), which needs `GOPRIVATE`, the token, and the committed go.sum hashes.
 - Because infrata is private, `GOPRIVATE` also bypasses the checksum database: the committed go.sum
-  hash is the only thing that would notice a v0.2.0 tag being moved.
+  hash is the only thing that would notice the v0.3.0 tag being moved.
 
 ## Where the contract lives
 

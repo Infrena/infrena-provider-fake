@@ -7,7 +7,7 @@ no network and no credentials.
 
 ## Build and install
 
-This plugin requires a released infrata (`github.com/infrata/infrata v0.2.0` in `go.mod`), but a local
+This plugin requires a released infrata (`github.com/infrata/infrata v0.3.0` in `go.mod`), but a local
 build uses a sibling checkout of infrata instead: infrata stays private until it is feature complete,
 so fetching the module needs credentials a casual build shouldn't. Lay the two repositories out side
 by side:
@@ -20,7 +20,7 @@ some-directory/
 
 `go.mod`'s `replace github.com/infrata/infrata => ../infrata` assumes exactly that layout. It builds
 whatever that checkout holds, so check out the release `go.mod` requires (`git -C ../infrata checkout
-v0.2.0`) when you want a local result that means what CI's does. Then:
+v0.3.0`) when you want a local result that means what CI's does. Then:
 
 ```bash
 go build -o infrata-plugin-fake ./cmd/infrata-plugin-fake
@@ -476,19 +476,30 @@ committed today:
 manifest: 1
 name: fake
 version: 0.1.1
-protocol: [1]
+# The protocol THIS RELEASE'S binary speaks: for an SDK-built plugin, exactly one version, the
+# pluginproto.Version of the infrata go.mod requires. It changes in the same commit as that require
+# (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
+# and a later host protocol bump forces no re-release: the host keeps accepting older versions.
+protocol: [2]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrata without a cloud account.
 # The oldest infrata release CI verifies this plugin against: go.mod's require, which ci.yml
 # builds and runs the e2e suite with. Nothing refuses a mismatched host at runtime yet; infrata
 # checks this at install (PLAN.md §31.3), which is designed but not built.
-infrata: ">= 0.2.0"
+infrata: ">= 0.3.0"
 source: https://github.com/infrata/infrata-provider-fake
 ```
 
-`infrata: ">= 0.2.0"` is the infrata release CI tests this plugin against. Today it is documentation
+`infrata: ">= 0.3.0"` is the infrata release CI tests this plugin against. Today it is documentation
 and an input to the compliance suite, not a runtime check: infrata will refuse a plugin whose floor
 the running build fails at `infrata plugins install`, which is not built yet.
+
+`protocol: [2]` is the plugin protocol this release's binary speaks. A binary built with infrata's
+SDK speaks exactly one: the `pluginproto.Version` of the infrata `go.mod` requires, which v0.3.0
+raised to 2. So `protocol:` changes in the same commit as that `require`, and both
+`internal/fake/manifest_test.go` and `scripts/release-check` refuse a mismatch. Once released, the
+value never goes stale — v0.1.1's binary announces protocol 1 for ever, and infrata v0.3.0 still
+accepts 1 — so a later infrata protocol bump does not force a re-release.
 
 infrata reads this file at a release tag, never at the tip of the default branch — the default
 branch's `plugin.yaml` describes code that has not shipped yet. `internal/fake.Version` is
@@ -503,7 +514,8 @@ which:
    against the infrata release `go.mod` requires, not a working tree.
 2. Switches to that same tagged infrata module (`scripts/ci-use-infrata-tag use`), then runs
    `scripts/release-check <tag>`, which refuses to continue if the git tag, `plugin.yaml`'s
-   `version:`, and the version the built binary's handshake reports disagree.
+   `version:`, and the version the built binary's handshake reports disagree, or if `plugin.yaml`'s
+   `protocol:` is not exactly the protocol version that handshake announces.
 3. Runs `scripts/build-release <version> dist`, which cross-compiles every platform `plugin.yaml`
    lists into `dist/infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz` (`.zip` for `windows`).
 4. Writes `dist/SHA256SUMS` and publishes a GitHub release with all of it attached.
@@ -513,7 +525,7 @@ will not be refused:
 
 ```
 $ scripts/release-check v0.1.1
-release-check: tag, plugin.yaml and binary all say 0.1.1
+release-check: tag, plugin.yaml and binary all say 0.1.1, and speak protocol [2]
 $ echo $?
 0
 ```

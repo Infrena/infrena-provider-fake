@@ -45,7 +45,7 @@ func main() { pluginsdk.Main(fake.NewPlugin()) }
 the responses (`pkg/pluginsdk/serve.go:109-147`). Because every request gets a goroutine, one
 process serves every operation infrata runs in parallel. One process also serves every configured
 instance of the plugin: two accounts of your cloud means one process holding two configured
-clients, told apart by a handle (`pkg/pluginproto/proto.go:116-122`).
+clients, told apart by a handle (`pkg/pluginproto/proto.go:134-140`).
 
 ### stdout is the protocol
 
@@ -135,7 +135,7 @@ The split exists to break a cycle. To configure an instance you need its resolve
 Resolving configuration needs variables, variables need a compile, and a compile needs the resource
 schemas. Schemas need no configuration: a server type is described the same way whichever account
 it would be created in. So infrata asks for schemas first, and configures instances later
-(`pkg/provider/provider.go:76-87`).
+(`pkg/provider/provider.go:79-90`).
 
 In the host, both interfaces are wrapped by an adapter, `internal/pluginhost/adapter.go`. It sends
 your methods only what they need, and then **rebuilds** your answer under its own rules before
@@ -146,7 +146,7 @@ says what the host does to the result.
 | --- | --- | --- |
 | `Plugin.Name()` | nothing | Must match the `plugin:` name that selected the binary. A mismatch is refused with a message naming both (`client.go:98-106`, `errors.go:55-69`). Every resource type must also be prefixed `<name>.` (`adapter.go:79-85`). |
 | `Plugin.Definitions()` | nothing | Validated when the plugin loads (see [section 9](#9-what-the-host-enforces-so-you-dont)). Any failure refuses the whole plugin. |
-| `Plugin.New(cfg)` | instance name, that instance's resolved configuration, project directory (`pkg/pluginproto/proto.go:110-114`) | An error is reported as "provider instance … could not be configured", pointing at the `providers:` entry (`internal/providers/prepare.go:302-309`). |
+| `Plugin.New(cfg)` | instance name, that instance's resolved configuration, project directory (`pkg/pluginproto/proto.go:128-132`) | An error is reported as "provider instance … could not be configured", pointing at the `providers:` entry (`internal/providers/prepare.go:302-309`). |
 | `Version()` (optional) | nothing | Sent in the handshake. A plugin that doesn't implement it reports `0.0.0` (`serve.go:343-348`). |
 | `Provider.Read` | type, address, provider ID, attributes | `(nil, nil)` means the resource is gone (`adapter.go:161-163`). Otherwise rebuilt, keeping the bookkeeping from the state infrata already held (`adapter.go:164`). |
 | `Provider.Create` | type, address, desired attributes | `(nil, nil)` becomes an error saying the resource may exist untracked (`adapter.go:173-175`). Otherwise rebuilt, with the address taken from the desired resource (`adapter.go:185-187`). |
@@ -159,8 +159,9 @@ says what the host does to the result.
 ### What is never sent
 
 A resource in infrata's state carries bookkeeping your cloud knows nothing about: its dependencies,
-its lifecycle flags (`prevent_destroy`, `retain`), and its creation and update timestamps. **None of
-it is ever sent to a plugin.** The wire type has no fields for it (`pkg/pluginproto/proto.go:133-154`).
+its lifecycle flags (`prevent_destroy`, `retain`, `ignore_changes`), and its creation and update
+timestamps. **None of it is ever sent to a plugin.** The wire type has no fields for it
+(`pkg/pluginproto/proto.go:151-172`).
 Anything you set on a result is ignored, and the host re-attaches its own copy:
 
 ```go
@@ -184,7 +185,7 @@ Anything you set on a result is ignored, and the host re-attaches its own copy:
 ```
 
 The address is the one exception. It *is* sent, because it is a legitimate input: you might put it
-in a tag, a remote name or an error message (`proto.go:143-151`). But the address on a *result* is
+in a tag, a remote name or an error message (`proto.go:161-169`). But the address on a *result* is
 ignored and replaced as above.
 
 So `current` is given to `Read` and `Update` for you to use: the ID to look the resource up, the
@@ -324,9 +325,10 @@ project (`README.md:67-68`).
 ### `Computed`: the cloud assigns it
 
 Mark an attribute `Computed` when your cloud decides its value: an ID, an IP address, an endpoint, a
-generated password. Configuration may not set it. A user who tries gets "is computed and cannot be
-set" (`internal/compiler/schema.go:82`). Before the resource exists, a plan shows the value as
-unknown (`internal/planner/diff.go:85`):
+generated password. Configuration may not set it, unless it is also `Optional`
+([below](#optional-with-computed-the-cloud-picks-unless-configuration-says)). A user who tries gets
+"is computed and cannot be set" (`internal/compiler/schema.go:192`). Before the resource exists, a plan shows the value as
+unknown (`internal/planner/diff.go:103`):
 
 ```
       endpoint: (known after apply)
@@ -335,14 +337,14 @@ unknown (`internal/planner/diff.go:85`):
 (`README.md:82`.) Another resource can still reference it: `database_url: ${db.endpoint}` plans as
 `(known after apply)` too (`README.md:75`), and is resolved at apply time.
 
-A computed attribute may not also be `Required` or have a `Default`. `Definition.Validate` refuses
-both combinations (`pkg/schema/definition.go:94-99`).
+A computed attribute may not also be `Required` or have a `Default`, and `Optional` is refused
+without `Computed`. `Definition.Validate` refuses all three (`pkg/schema/definition.go:94-101`).
 
 ### `ForceNew`: changing it replaces the resource
 
 Mark an attribute `ForceNew` when your API cannot change it in place: a server's image, a
 database's engine, a network's CIDR. A change to it plans as **replace** instead of **update**, and
-the plan names the attribute that forced it (`internal/planner/render.go:69-72`). This is the
+the plan names the attribute that forced it (`internal/planner/render.go:94-97`). This is the
 README's drift example: someone edited `engine` outside infrata.
 
 ```
@@ -383,23 +385,24 @@ from (`pkg/value/format.go:251-258`):
 ```
 
 (`README.md:85`.) A default of the wrong kind stops the plugin from loading. It fails as the schema
-is encoded (`pkg/schema/wire.go:61-67`). Note `int64(10)`, not `10`: an untyped `10` is an `int`,
-which `schema.DatumValue` accepts (`attribute.go:69-70`), but writing `int64` says what you mean.
+is encoded (`pkg/schema/wire.go:65-71`). Note `int64(10)`, not `10`: an untyped `10` is an `int`,
+which `schema.DatumValue` accepts (`attribute.go:106-107`), but writing `int64` says what you mean.
 
 **Why a datum and not a function?** The field used to be a function of environment, region,
 account and project. A function cannot cross a pipe, and the one use it had was withdrawn
-(`pkg/schema/attribute.go:26-39`). A value that really does vary by region or account is one of two
+(`pkg/schema/attribute.go:63-76`). A value that really does vary by region or account is one of two
 other things. Either it is the user's choice, in which case make it a variable they can see in
-configuration, or your cloud decides it, in which case make it `Computed` and report it.
+configuration, or your cloud decides it, in which case make it `Computed` and report it (and
+`Optional` too, if configuration may also choose).
 
 ### An attribute `Read` reports but configuration omits
 
 The planner diffs in both directions. An attribute configuration sets but `Read` doesn't report
-plans a change, "not set on the resource" (`internal/planner/diff.go:90-96`). The converse holds
+plans a change, "not set on the resource" (`internal/planner/diff.go:108-114`). The converse holds
 too: an attribute `Read` reports but configuration doesn't set plans a change with the reason
 "removed from configuration", unless the schema marks it `Computed` or doesn't define it at all
-(`diff.go:36-48`, `diffAttributes`). If that attribute is `ForceNew`, the change is a **replace**
-(`forcesReplacement`, `diff.go:251`). A `Default`, or an instance's `defaults:`, is filled into
+(`diff.go:47-66`, `diffAttributes`). If that attribute is `ForceNew`, the change is a **replace**
+(`forcesReplacement`, `diff.go:269`). A `Default`, or an instance's `defaults:`, is filled into
 configuration before the diff (`internal/compiler/schema.go`, `applyDefaults` and
 `applyInstanceDefaults`), so it prevents the change only when it equals what `Read` reports.
 
@@ -413,10 +416,89 @@ tags, gives:
 Plan: 0 to create, 1 to update, 0 to replace, 0 to destroy, 0 to forget.
 ```
 
-So an attribute `Read` always reports must be `Required`, `Computed`, or have a default that matches
-what `Read` reports. Omit an empty optional value from what `Read` returns; don't return it as `{}`
-or `""`. The "removed from configuration" path is also what removes a real attribute a user deleted
-from configuration, through [the `Update` contract](#the-update-contract).
+So an attribute `Read` always reports must be `Required`, `Computed` (alone, or with `Optional` when
+configuration may set it — next subsection), or have a default that matches what `Read` reports.
+Omit an empty optional value from what `Read` returns; don't return it as `{}` or `""`. The "removed
+from configuration" path is also what removes a real attribute a user deleted from configuration,
+through [the `Update` contract](#the-update-contract).
+
+### `Optional` with `Computed`: the cloud picks unless configuration says
+
+Some attributes are both the user's and the cloud's: configuration *may* set them, and when it
+doesn't, the cloud chooses. A subnet's availability zone is the classic case. Declare those
+`Optional: true, Computed: true`.
+
+**infrata:** (v0.3.0, `PLAN.md` §14.1, `pkg/schema/attribute.go:22-40`)
+
+- **Set in configuration**, it is an ordinary attribute: diffed normally, and `ForceNew` applies.
+- **Unset**, the value the provider reports is recorded and **never diffed** (`diffAttributes`,
+  `internal/planner/diff.go:47-66`). It can never plan a change, and a `ForceNew` one can never plan a
+  replacement, however the provider's value moves. The accepted cost: drift on an unset one is
+  invisible to `plan`. `refresh` and `state show` still show it.
+- **`Optional` without `Computed` is refused** by `Validate` (`pkg/schema/definition.go:96-99`):
+  every attribute that isn't `Required` is already optional, so the flag alone would say nothing.
+- **`explain`** lists these in their own group, "Optional, chosen by the provider if unset"
+  (`internal/cli/explain.go:92-95`).
+- **A plan** marks a provider-chosen value `[provider-chosen, not in configuration]` under
+  `--verbose`, and always when the attribute is `ForceNew`, where a later explicit value would
+  replace the resource (`renderAttributeName`, `internal/planner/render.go`). It does not say "no
+  longer set in configuration", because state can't tell infrata whether configuration ever set it.
+- **`import --generate`** writes the `ForceNew` ones, which are the resource's identity, and omits
+  the updatable ones, which would pin every cloud default into the file (`internal/generator/generate.go`).
+
+Your plugin does nothing special. On `Create`, report the value the API chose, as you would any
+computed value. On an update where configuration leaves it unset, the plan carries the observed value
+forward into the operation (`afterAttributes`, `internal/planner/diff.go:324-367`), so `Update` is
+not asked to change it. An `Update` loop that keeps `Computed` attributes, like
+[the fake's](#the-update-contract), keeps these too.
+
+Reproduced 2026-09-14 against infrata v0.3.0, with a scratch copy of this plugin (not shipped) whose
+`fake.database` gained a `zone` that the fake cloud fills with `zone-a` when configuration names
+none. Declared `{Kind: value.KindString, ForceNew: true}`, the unedited basic project plans a
+replacement straight after `apply`:
+
+```
+  -/+ fake.database.db  (replacement forced by: zone)
+    ⚠ This resource has 1 dependent resource.
+      endpoint: "db-2.db.fake" -> (known after apply)
+      zone: "zone-a" -> (absent)
+```
+
+Declared `{Kind: value.KindString, Optional: true, Computed: true, ForceNew: true}`, the same
+project plans `No changes. Configuration matches the observed state.` Writing `zone: zone-a` still
+plans no changes, and `zone: zone-b` plans the replacement, `zone: "zone-a" -> "zone-b"`, which is
+correct. Declared `Optional` without `Computed`, the plugin doesn't load:
+
+```
+Error: cannot describe "fake.database": the fake plugin sent an invalid schema: fake.database: attribute "zone" is Optional without Computed, which says nothing: every attribute that is not Required is already optional. Optional exists to pair with Computed (PLAN.md §14.1)
+```
+
+### `Aliases`: other spellings of one attribute
+
+**infrata:** (v0.3.0, `PLAN.md` §14.1) `Aliases` lists alternative spellings configuration may use,
+for example `Aliases: []string{"cidr", "cidr_block"}` on an attribute declared `CidrBlock`.
+
+- **Matching is case-insensitive** across the canonical name and every alias, and folds case only:
+  `cidr_block` and `cidrblock` are different spellings (`foldName`, `pkg/schema/alias.go`).
+- **Names that fold together are refused at load.** `Validate` rejects two attributes, an attribute
+  and an alias, or two aliases that are equal ignoring case (`checkSpellings`, `pkg/schema/alias.go`),
+  so a collision is a plugin that won't start, not a runtime guess. **This binds plugins that declare
+  no aliases too:** attributes `Name` and `name` on one type no longer load on an infrata v0.3.0 host,
+  whatever protocol the plugin speaks, because the host validates every schema it receives
+  (`adapter.go:72-74`).
+- **The compiler resolves every spelling to the canonical name, once**, at its boundary
+  (`canonicaliseAttributes`, `internal/compiler/schema.go`). Your plugin, state and the plan artifact
+  only ever see the canonical name, so adding an alias in a later release changes no stored key.
+  Configuration setting one attribute under two spellings is an error naming both.
+- **Plans and `import --generate` display the first declared alias**, and `explain` lists every
+  spelling (`Display` and `Spellings`, `pkg/schema/alias.go`). Put the spelling you want users to read
+  first.
+- **Aliases are schema, and cross the wire with it.** infrata holds no mapping of its own, so changing
+  an alias needs a plugin release.
+
+**Recommendation:** add an alias only for a spelling users genuinely reach for, such as the cloud
+API's own name beside a friendlier one. A plugin generated from an API schema is the case the
+feature was designed for; a hand-written plugin with names chosen once rarely needs one.
 
 ### The `Update` contract
 
@@ -478,7 +560,7 @@ Error: configuration is not valid
 
 Without the requirement, that project would plan cleanly and the user would find out when your
 cloud's API rejected the create, halfway through an apply. `explain` lists requirements under
-`Requires:` (`internal/cli/explain.go:89-94`), shown in the output in section 3.
+`Requires:` (`internal/cli/explain.go:97-102`), shown in the output in section 3.
 
 Know what a requirement checks: it is satisfied if **any** resource of a satisfying type exists in
 the **same provider instance** — corrected 2026-09-13; it used to count types across the whole
@@ -551,7 +633,7 @@ cloud. The retry rules belong to infrata, and a later version may treat the clas
 ### Why `NotSafeToRetry` is the default
 
 It is the zero value of `provider.Retryability` (`pkg/provider/provider.go:57`). The protocol treats
-a missing classification as `NotSafeToRetry` (`pkg/pluginproto/proto.go:97-99`). The two ways to get
+a missing classification as `NotSafeToRetry` (`pkg/pluginproto/proto.go:115-117`). The two ways to get
 this wrong are not equally bad. Classify too cautiously, and a user re-runs `apply` after a transient
 failure. Classify too permissively, and a retried create produces a duplicate resource that nothing
 tracks. So return `NotSafeToRetry` for any error you don't specifically recognise:
@@ -862,6 +944,16 @@ supposed to guard against.
    `Lifecycle`, which makes a `prevent_destroy` guard vanish with no error, and losing
    `Dependencies`, which is the only destroy-ordering information once a resource has left
    configuration.
+
+   The same holds for `lifecycle: ignore_changes: [...]` (infrata v0.3.0, `PLAN.md` §14.2). A user
+   lists attributes something else owns, such as a task revision a CI pipeline sets on every deploy,
+   and the planner stops proposing to revert them: state keeps the observed value, a create uses
+   configuration's, and a replacement resets them and the plan says so. It is planner work on
+   `Lifecycle.IgnoreChanges` (`pkg/resource/resource.go`), and `Lifecycle` never crosses to a plugin,
+   so there is nothing for you to implement. Nor is it a reserved attribute name
+   (`internal/registry/registry.go:291` still lists only `prevent_destroy` and `retain`): those two
+   are reserved because an instance's `defaults:` accepts them for every resource, and it does not
+   accept `ignore_changes` (`lifecycleFor`, `internal/compiler/bind.go`).
 2. **Sensitivity is forced from the schema.** Every value for a `Sensitive` attribute is marked,
    whatever the plugin sent (`adapter.go:348-353`). *Prevents:* a plugin that forgets the flag
    putting a password into a plan, a report, or configuration generated by `import --generate`.
@@ -875,12 +967,14 @@ supposed to guard against.
    is declared (`adapter.go:338-346`). *Prevents:* a typo in a returned key being stored in state and
    showing up in a plan as a change nobody can explain.
 6. **Schemas are validated when the plugin loads.** Each is checked by `Definition.Validate`
-   (`adapter.go:72-74`, `pkg/schema/definition.go:79-112`), against the type-prefix rule
+   (`adapter.go:72-74`, `pkg/schema/definition.go:79-120`), against the type-prefix rule
    (`adapter.go:79-85`), and against the reserved attribute names `prevent_destroy` and `retain`
-   (`adapter.go:86-96`, `internal/registry/registry.go:291`). The registry then applies its own
+   (`adapter.go:86-96`, `internal/registry/registry.go:291`). Since v0.3.0 `Validate` also refuses
+   `Optional` without `Computed`, and any two attribute names or aliases equal ignoring case
+   ([section 3](#aliases-other-spellings-of-one-attribute)). The registry then applies its own
    checks to the loaded plugin (`internal/registry/registry.go:75-95`): no type in the `module.`
    namespace, and no type already claimed by another plugin (`registry.go:246-265`). A default of the
-   wrong kind fails when the schema is encoded (`pkg/schema/wire.go:61-67`). *Prevents:* two plugins
+   wrong kind fails when the schema is encoded (`pkg/schema/wire.go:65-71`). *Prevents:* two plugins
    claiming one type, with the winner depending on load order; a `prevent_destroy` attribute that
    collides with the lifecycle option of the same name; and a malformed schema surfacing halfway
    through a plan instead of at startup.
@@ -980,12 +1074,19 @@ to install, and they can act on the complaint (`loader.go:136-140`).
 
 What must stay compatible between infrata and your plugin is the **wire protocol**, not the Go types
 you compiled against (`pkg/pluginproto/proto.go:9-12`). The host accepts a *set* of protocol versions
-(`proto.go:25-37`). A plugin built against an older SDK keeps working as long as its protocol version
+(`proto.go:25-55`). A plugin built against an older SDK keeps working as long as its protocol version
 is in that set, so you don't have to rebuild for every infrata release (`PLAN.md` §61.3). Under
 infrata's own versioning rules, a minor release may add a protocol version but must keep the previous
 one, and only a major release may drop one (`PLAN.md` §61.1). If the set no longer includes your
 version, the user gets an error naming your plugin, its path, both sides' versions, and which one to
 upgrade (`internal/pluginhost/errors.go:23-46`).
+
+**infrata:** v0.3.0 raised `pluginproto.Version` to 2 and made `Supported` `{2, 1}` (`proto.go:25-55`).
+The messages kept their shape. The schema payload gained `optional` and `aliases`, and because an
+attribute decodes leniently, an older host would silently drop both, so a plugin relying on them must
+be refused by that host rather than half-work. Every plugin built against v0.3.0 announces 2, whether
+or not it uses either field; one built against v0.2.0 still announces 1 and still loads. That bump is
+what changes your manifest's `protocol` ([section 12](#protocol-what-this-releases-binary-speaks)).
 
 Because of that, `pkg/pluginproto` "changes additively, and any removal bumps `protocol`" (`PLAN.md`
 §31.1, "Handshake and version") — a new optional field on the wire is not a protocol bump. `pkg/value`
@@ -1000,13 +1101,13 @@ recognise breaks on the next such change, even though nothing else about the pro
 
 `github.com/infrata/infrata` is a private repository, and it stays private until infrata is feature
 complete (`PLAN.md` §31.1, "The repository stays PRIVATE until feature complete"). Its releases are
-real module versions (`v0.1.0`, `v0.2.0`), but fetching one needs credentials. The setup this
+real module versions (`v0.1.0`, `v0.2.0`, `v0.3.0`), but fetching one needs credentials. The setup this
 repository uses is two directives: a `require` naming the infrata **release** your plugin supports,
 and a `replace` pointing at a checkout of infrata next to your plugin, for local work:
 
 ```
 // go.mod
-require github.com/infrata/infrata v0.2.0
+require github.com/infrata/infrata v0.3.0
 
 replace github.com/infrata/infrata => ../infrata
 ```
@@ -1061,7 +1162,7 @@ them in `scripts/ci-use-infrata-tag use`, called from both `ci.yml` and `release
 Three things that are easy to get wrong:
 
 - **Commit infrata's hashes to `go.sum`.** With the `replace` dropped, `-mod=readonly` needs
-  `github.com/infrata/infrata v0.2.0 h1:…` and its `/go.mod h1:…` line. Don't have CI run `go mod
+  `github.com/infrata/infrata v0.3.0 h1:…` and its `/go.mod h1:…` line. Don't have CI run `go mod
   tidy` or `go mod download` to write them: a checksum CI generated for itself verifies nothing, and
   because `GOPRIVATE` bypasses the checksum database, the committed hash is the only thing that
   would notice the tag being moved. Generate them locally, once, with the `replace` dropped. `go mod
@@ -1120,9 +1221,17 @@ works with (`PLAN.md` §31.2). This repository's:
 manifest: 1
 name: fake
 version: 0.1.1
-protocol: [1]
+# The protocol THIS RELEASE'S binary speaks: for an SDK-built plugin, exactly one version, the
+# pluginproto.Version of the infrata go.mod requires. It changes in the same commit as that require
+# (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
+# and a later host protocol bump forces no re-release: the host keeps accepting older versions.
+protocol: [2]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrata without a cloud account.
+# The oldest infrata release CI verifies this plugin against: go.mod's require, which ci.yml
+# builds and runs the e2e suite with. Nothing refuses a mismatched host at runtime yet; infrata
+# checks this at install (PLAN.md §31.3), which is designed but not built.
+infrata: ">= 0.3.0"
 source: https://github.com/infrata/infrata-provider-fake
 ```
 
@@ -1147,7 +1256,7 @@ Every design decision below follows from those two facts.
 | `manifest` | yes | The format version of this file. Checked first, before any other key. |
 | `name` | yes | The plugin's name: binary `infrata-plugin-<name>`, `Plugin.Name()`, and every type's prefix. |
 | `version` | yes | `MAJOR.MINOR.PATCH`. Must equal the tag the file is read at. |
-| `protocol` | yes | A **list** of every protocol version the plugin speaks, because the host accepts a set. |
+| `protocol` | yes | The protocol versions **this release's binary** speaks: exactly one for a plugin built with `pkg/pluginsdk`. See [below](#protocol-what-this-releases-binary-speaks). |
 | `platforms` | yes | `GOOS/GOARCH` for every build you publish. |
 | `description` | yes | One line, for a search result. |
 | `infrata` | no | The infrata releases this plugin is known to work with, in `pkg/semver` syntax. |
@@ -1158,6 +1267,29 @@ Every design decision below follows from those two facts.
 Validate your own manifest with `pkg/pluginmanifest.Parse` (`infrata/pkg/pluginmanifest/manifest.go`'s
 `Parse`) — the same parser `infrata plugins install` will use — rather than a hand check a typo
 could pass.
+
+### `protocol`: what this release's binary speaks
+
+**infrata:** `PLAN.md` §31.2, amended 2026-09-14 (infrata `b5f361b`, included in v0.3.0), defines
+`protocol` as the plugin protocol versions **this release's binary** can speak. For a plugin built
+with `pkg/pluginsdk` that is exactly one, the `pluginproto.Version` of the infrata it was built
+against, which the SDK puts in the handshake (`pkg/pluginsdk/serve.go:92-96`). A longer list is only
+for a plugin that hand-rolls the protocol and genuinely negotiates several. Don't copy the host's
+`Supported` set: `[2, 1]` claims a protocol your binary cannot speak.
+
+Three consequences follow:
+
+1. **It never goes stale.** This repository's v0.1.1 was released saying `protocol: [1]`, and that
+   stays true: that binary announces 1 and always will.
+2. **A host protocol bump forces no re-release.** The old version stays in `Supported`, so an existing
+   release keeps loading and keeps describing itself correctly.
+3. **Your next release changes `protocol` in the same commit as its infrata `require` bump**, because
+   the rebuilt binary announces the new number. This repository went to `protocol: [2]` in the commit
+   that moved `go.mod` to `github.com/infrata/infrata v0.3.0`.
+
+Two checks enforce the third here. `internal/fake/manifest_test.go` requires `protocol` to be exactly
+`[pluginproto.Version]`, and `scripts/release-check` refuses a manifest whose `protocol` is not
+exactly the version the built binary's handshake announces ([section 13](#13-the-release-gate)).
 
 ### Why it is read at a release tag
 
@@ -1199,10 +1331,11 @@ your own release gate makes of it.
 **infrata:** "development build" means a host reporting `0.0.0` (`AllowsInfrata`,
 `pkg/pluginmanifest/manifest.go`). Now that infrata has tags, a plain `go build` of an infrata checkout
 isn't one. Go stamps the version from git: a clean checkout at `v0.2.0` reports `0.2.0`, and one commit
-past it reports `0.2.1-0.<time>-<hash>`, which compares as `0.2.1`. Measured 2026-09-13.
+past it reports `0.2.1-0.<time>-<hash>`, which compares as `0.2.1`. Measured 2026-09-13; a checkout at
+`v0.3.0` likewise reports `infrata 0.3.0 (45deb30, …)` (2026-09-14).
 
 **Recommendation:** make the floor the release your CI builds against, and check it there. This
-repository's `infrata: ">= 0.2.0"` matches `go.mod`'s `require`. The e2e test
+repository's `infrata: ">= 0.3.0"` matches `go.mod`'s `require`. The e2e test
 `TestTheInfrataUnderTestSpeaksTheManifestsProtocol` applies `AllowsInfrata` to a host built from
 that tag, so a floor above the tested release fails CI.
 
@@ -1224,7 +1357,9 @@ that tag, so a floor above the tested release fails CI.
 
 A release has three version numbers that must agree: the **git tag**, `plugin.yaml`'s **`version`**,
 and the version the **built binary reports** in its handshake. Your release workflow must refuse to
-publish unless they do (`PLAN.md` §31.2, "What a plugin repository owes its own manifest").
+publish unless they do (`PLAN.md` §31.2, "What a plugin repository owes its own manifest"). This
+repository's gate also checks one more fact the manifest states about a release: that `protocol` is
+exactly the protocol version the same handshake announces.
 
 ### Why a release step, not a test
 
@@ -1240,8 +1375,8 @@ Stamping at release time only proves something if an unstamped build reports a *
 Suppose `Version` defaulted to `"0.1.1"`, the same as `plugin.yaml`. Then a release whose `-X` flag
 named the wrong symbol would still report `0.1.1`, correct by coincidence, and the gate would pass.
 Go's linker ignores an `-X` for a symbol that doesn't exist, without any error
-(`scripts/release-check:6-7`). With the default at `0.0.0-dev`, a broken stamp shows up as a
-mismatch. `scripts/scripts_test.go:93-104` points `-X` at a nonexistent variable and checks that the
+(`scripts/release-check:7-8`). With the default at `0.0.0-dev`, a broken stamp shows up as a
+mismatch. `scripts/scripts_test.go:133-144` points `-X` at a nonexistent variable and checks that the
 gate refuses, reporting `0.0.0-dev`. It also gives bug reports honest versions: a build from a
 checkout never claims to be a release (`internal/fake/plugin.go:15-20`).
 
@@ -1252,7 +1387,7 @@ with the cookie set and an empty stdin. The SDK writes the handshake and exits, 
 out the version field:
 
 ```bash
-# scripts/release-check:37-44
+# scripts/release-check:38-45
 CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrata-plugin-fake" ./cmd/infrata-plugin-fake
 
 # The binary refuses to start without the host's cookie. With it and an empty stdin, it writes
@@ -1263,9 +1398,13 @@ handshake="${out%%$'\n'*}"
 reported="$(printf '%s' "$handshake" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 ```
 
-Before that, it checks the tag has the form `vMAJOR.MINOR.PATCH` (`release-check:14-19`) and that the
-tag agrees with `plugin.yaml`'s `version`, tolerating CRLF line endings (`release-check:24-32`). Each
-failure is tested in `scripts/scripts_test.go`.
+Before that, it checks the tag has the form `vMAJOR.MINOR.PATCH` (`release-check:15-20`) and that the
+tag agrees with `plugin.yaml`'s `version`, tolerating CRLF line endings (`release-check:25-33`). After
+the version, it reads the handshake's `protocol` field and refuses unless `plugin.yaml` says exactly
+`[<that number>]` (`release-check:52-66`). A manifest left at the previous release's protocol after a
+`require` bump, or listing the host's whole `Supported` set, can't be published. Each failure is
+tested in `scripts/scripts_test.go`, the protocol one by
+`TestReleaseCheckRefusesAManifestProtocolTheBinaryDoesNotSpeak`.
 
 ### Archive names and `SHA256SUMS`
 
@@ -1278,7 +1417,7 @@ infrata-plugin-<name>_<version>_<goos>_<goarch>.tar.gz      (.zip for windows)
 
 `scripts/build-release` builds every platform `plugin.yaml` lists (`build-release:16`). It archives
 each build under that name, with the binary, `plugin.yaml` and `README.md` inside a top-level
-directory of the same stem (`build-release:29-46`). `scripts/scripts_test.go:108-147`
+directory of the same stem (`build-release:29-46`). `scripts/scripts_test.go:148-187`
 (`TestBuildReleaseNamesArchivesByTheInstallConvention`) checks the names and contents. A wrongly named
 archive is a release nobody can install.
 
@@ -1382,29 +1521,23 @@ and overrides it on any resource, including from a variable.
   `pluginproto.DiscoverParams` declare only `Types` (`pkg/provider/provider.go`,
   `pkg/pluginproto/proto.go`) — there is no `Region` field to read. A plugin that scans several
   regions takes them from its own instance `config:` (below); the host cannot supply them because it
-  does not know what a region IS for your cloud. (Building against v0.2.0: that release still
-  declares `DiscoverRequest.Region` / `DiscoverParams.Region`, but infrata's only construction of the
-  request, `provider.DiscoverRequest{Types: ask}` in `internal/discovery/walk.go:61`, never sets it,
-  so it reads `""` forever — don't implement against it there either. The field is gone on infrata
-  main past v0.2.0.)
+  does not know what a region IS for your cloud. (v0.2.0 still declared a `Region` field the host
+  never set; v0.3.0 removed it, so a plugin that read it no longer compiles.)
 - **There is no ambient `region` (or `account`).** infrata seeds exactly two process variables into
   every scope: `environment` and `project` (infrata `internal/variables/resolve.go`,
   `ProcessVariables`; `PLAN.md` §6.3 and §12.1, amended 2026-09-13). `region` is an ordinary
   variable name — declare it under `variables:` like any other, or use a differently-named one, as
-  the AWS example below does with `aws_region`. (Building against v0.2.0: `region` was reserved
-  there but never supplied, so even a project that declared its own `region` variable got
-  `undefined variable "region"` at the use site rather than `variable "region" is not set` at the
-  declaration, and `--var region=...` was refused outright. That reservation is gone on infrata
-  main past v0.2.0 — `region` behaves like any other variable name there.)
+  the AWS example below does with `aws_region`. (Before v0.3.0, `region` was reserved but never
+  supplied.)
 
-What does work is **instance `defaults:`**. In `internal/compiler/schema.go:42-44`, compilation runs
+What does work is **instance `defaults:`**. In `internal/compiler/schema.go:49-51`, compilation runs
 `applyInstanceDefaults`, then `applyDefaults` (the schema's own `Default`), then `checkRequired`.
 That order gives three rules:
 
 - A `Required` attribute can be satisfied by the instance's `defaults:`.
 - A value the resource writes itself always wins. `applyInstanceDefaults` skips any attribute already
   present, any the type doesn't declare, any computed attribute, and any default of the wrong kind.
-  It marks what it fills as a provider-instance default (`schema.go:199-216`).
+  It marks what it fills as a provider-instance default (`schema.go:309-326`).
 - A required attribute set nowhere is refused at compile time, before any AWS call.
 
 `defaults:` values are resolved like configuration, so they can use variables
@@ -1764,17 +1897,23 @@ attribute:
 - **An RDS master password is `Sensitive`**, and it needs one more thing: AWS never returns it.
   `rds/types.DBInstance` has `MasterUsername` and `MasterUserSecret`, but no password field. The
   planner treats an attribute configuration sets and the observed state lacks as a change, "not set on
-  the resource" (`internal/planner/diff.go:90-96`, `diffAttributes`). So a `Read` that drops the
+  the resource" (`internal/planner/diff.go:108-114`, `diffAttributes`). So a `Read` that drops the
   password makes every plan propose an update, forever. **In `Read`, carry a write-only attribute
   forward from `current`**, since the API can't tell you it changed. That is a legitimate use of
   `current`. (Carrying *bookkeeping* forward is the host's job, [section 9](#9-what-the-host-enforces-so-you-dont).)
   Or offer RDS's managed secret (`MasterUserSecret`) and keep the password out of state entirely.
-- **Recommendation: declare everything AWS always returns.** This is the converse of the password
-  case ([section 3](#an-attribute-read-reports-but-configuration-omits)): an attribute that `Read`
-  fills from every API response, but that configuration may omit and that isn't `Computed`, plans a
-  change on every run. An optional `availability_zone` on a subnet would be the worst case. EC2
-  always returns it, and it is `ForceNew`, so every plan would propose a replacement. Make it
-  `Required`, or `Computed` if AWS chooses it. Likewise, when `DescribeVpcs` returns no tags, leave
+- **Recommendation: declare everything AWS always returns, and make what AWS chooses when the user
+  doesn't `Optional` + `Computed`.** This is the converse of the password case
+  ([section 3](#an-attribute-read-reports-but-configuration-omits)): an attribute that `Read` fills
+  from every API response, but that configuration may omit and that isn't `Computed`, plans a change
+  on every run. An optional `availability_zone` on a subnet is the worst case: EC2 always returns it,
+  and it is `ForceNew`, so every plan would propose a replacement. Declare it
+  `{Kind: value.KindString, Optional: true, Computed: true, ForceNew: true}`. A user may name a zone,
+  AWS picks one otherwise, and an unset zone is never diffed, so it never forces a replacement
+  ([section 3](#optional-with-computed-the-cloud-picks-unless-configuration-says) reproduces exactly
+  this). Before infrata v0.3.0 the only honest choices were `Required` or `Computed`, and each took a
+  choice away from the user. Keep plain `Computed` for what nobody may set, such as IDs and ARNs.
+  Likewise, when `DescribeVpcs` returns no tags, leave
   `tags` out of the state `Read` returns. Returning it as `{}` makes every untagged VPC plan
   `tags: {} -> (absent)`.
 
