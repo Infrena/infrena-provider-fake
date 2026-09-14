@@ -160,9 +160,12 @@ func TestOperationsOverlapRatherThanSerialise(t *testing.T) {
 	p, path := newTestProvider(t)
 	ctx := context.Background()
 
+	// delayMS is large next to the fixed cost of a read (loading the cloud file, starting
+	// goroutines), which the threshold below does not scale with. At 150ms a slow CI runner
+	// took 312ms for four genuinely overlapping reads against a 300ms threshold.
 	const (
 		resources = 4
-		delayMS   = 150
+		delayMS   = 400
 	)
 
 	states := make([]*resource.ResourceState, 0, resources)
