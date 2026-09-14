@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # release-check TAG: refuse to release unless the git tag, plugin.yaml's version and the version
-# the built binary reports all agree (infrata PLAN.md §31.2). The manifest is authoritative and
-# the binary secondary; this check is what blocks a release where they disagree.
+# the built binary reports all agree, and plugin.yaml's protocol: is exactly the protocol version
+# the binary's handshake announces (infrata PLAN.md §31.2). The manifest is authoritative and the
+# binary secondary; this check is what blocks a release where they disagree.
 #
 # FAKE_VERSION_SYMBOL overrides the -ldflags -X target. It exists so a test can simulate the
 # variable being renamed, which `go build -X` otherwise ignores in silence.
@@ -47,4 +48,19 @@ if [[ "$reported" != "$version" ]]; then
   echo "The -ldflags symbol ${symbol} does not set internal/fake.Version; every archive would report the wrong version." >&2
   exit 1
 fi
-echo "release-check: tag, plugin.yaml and binary all say $version"
+
+# protocol: is the versions THIS release's binary speaks (PLAN.md §31.2, amended 2026-09-14). An
+# SDK-built binary announces exactly one, so the manifest must say exactly [that]. Compared with
+# whitespace stripped, so `[2]` and `[ 2 ]` agree and `[2, 1]` does not.
+manifest_protocol="$(sed -n 's/^protocol:[[:space:]]*//p' "$manifest" | sed 's/[[:space:]]*#.*//' | tr -d " \r")"
+spoken="$(printf '%s' "$handshake" | sed -n 's/.*"protocol":\([0-9][0-9]*\).*/\1/p')"
+if [[ -z "$spoken" ]]; then
+  echo "release-check: the binary's handshake carries no protocol version (handshake: $handshake)" >&2
+  exit 1
+fi
+if [[ "$manifest_protocol" != "[$spoken]" ]]; then
+  echo "release-check: $manifest says protocol: ${manifest_protocol:-<missing>}, but the binary speaks protocol $spoken, so it must say [$spoken]" >&2
+  echo "protocol: changes in the same commit as go.mod's infrata require (infrata PLAN.md §31.2)." >&2
+  exit 1
+fi
+echo "release-check: tag, plugin.yaml and binary all say $version, and speak protocol [$spoken]"

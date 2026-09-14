@@ -87,6 +87,46 @@ func TestReleaseCheckAcceptsACRLFManifest(t *testing.T) {
 	}
 }
 
+// TestReleaseCheckRefusesAManifestProtocolTheBinaryDoesNotSpeak. `protocol:` is what this
+// release's binary speaks (infrata PLAN.md §31.2), which for an SDK-built binary is exactly one
+// version. Each case keeps the version agreeing, so only the protocol can be the refusal: the
+// previous release's [1], left behind after an infrata require bump, and the host's whole
+// Supported set, [2, 1], which is the wrong answer §31.2's amendment was written against.
+func TestReleaseCheckRefusesAManifestProtocolTheBinaryDoesNotSpeak(t *testing.T) {
+	v := manifestVersion(t)
+	data, err := os.ReadFile("../plugin.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "protocol:") {
+			current = line
+		}
+	}
+	if current == "" {
+		t.Fatal("plugin.yaml has no top-level protocol: line to doctor")
+	}
+	for _, doctored := range []string{"protocol: [1]", "protocol: [2, 1]", "protocol: [99]"} {
+		t.Run(doctored, func(t *testing.T) {
+			if doctored == current {
+				t.Fatalf("plugin.yaml already says %q, so this case changes nothing", doctored)
+			}
+			manifest := filepath.Join(t.TempDir(), "plugin.yaml")
+			if err := os.WriteFile(manifest, []byte(strings.Replace(string(data), current, doctored, 1)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := run(t, []string{"FAKE_MANIFEST=" + manifest}, "release-check", "v"+v)
+			if err == nil {
+				t.Fatalf("release-check accepted %q against the binary's handshake:\n%s", doctored, out)
+			}
+			if !strings.Contains(out, "speaks protocol") {
+				t.Errorf("the refusal does not say which protocol the binary speaks:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion. `go build -X` on a symbol that
 // does not exist is silently ignored, so a renamed Version variable would ship every
 // archive reporting 0.0.0-dev. This simulates exactly that drift.

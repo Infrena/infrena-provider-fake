@@ -28,16 +28,21 @@ func readManifest(t *testing.T) *pluginmanifest.Manifest {
 }
 
 // TestTheManifestDescribesThisPlugin. The manifest is authoritative for a release (infrata PLAN.md §31.2), so it
-// must name the plugin this binary is and speak the protocol this SDK speaks. The version is not
+// must name the plugin this binary is and list exactly the protocol this SDK speaks. The version is not
 // compared here: the code reports 0.0.0-dev until a release stamps it, and scripts/release-check
 // is what asserts tag == manifest == binary.
+//
+// Exactly, not "includes": §31.2 (amended 2026-09-14) defines `protocol:` as the versions this
+// release's binary speaks, and an SDK-built binary announces one. A manifest listing the host's
+// whole Supported set, [2, 1], claims a protocol this binary cannot speak.
 func TestTheManifestDescribesThisPlugin(t *testing.T) {
 	m := readManifest(t)
 	if m.Name != PluginName {
 		t.Errorf("plugin.yaml names %q, but this plugin is %q", m.Name, PluginName)
 	}
-	if !m.SpeaksProtocol([]int{pluginproto.Version}) {
-		t.Errorf("plugin.yaml's protocol %v does not include protocol %d, which the SDK this plugin is built with speaks",
+	if len(m.Protocol) != 1 || m.Protocol[0] != pluginproto.Version {
+		t.Errorf("plugin.yaml's protocol is %v, but the SDK this plugin is built with speaks exactly [%d]; "+
+			"change it in the same commit as go.mod's infrata require",
 			m.Protocol, pluginproto.Version)
 	}
 }
