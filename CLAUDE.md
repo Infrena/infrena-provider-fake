@@ -37,8 +37,11 @@ dependency is one an outside author has too.
 **Built and passing.** The plugin (`internal/fake/`: cloud file, schemas, CRUD with attribute
 removal, discover/import, failure/latency injection, a per-file lock, plugin configuration) and its
 binary (`cmd/infrata-plugin-fake/`) are complete and documented, with a version-gated release
-workflow that has published v0.1.0 and v0.1.1. Its `INFRATA_CHECKOUT_TOKEN`
-secret, which lets it check out the private `infrata/infrata` repository, is configured. The implementation followed
+workflow that has published v0.1.0 and v0.1.1. CI (`.github/workflows/ci.yml`, on push to `main`,
+pull requests, and called by `release.yml`) builds against the infrata RELEASE `go.mod` requires
+(v0.2.0) in its gating `tag` job, and against infrata `main` in an advisory `main` job. Its
+`INFRATA_CHECKOUT_TOKEN` secret, which lets it check out and fetch the private `infrata/infrata`
+repository, is configured; ci.yml has not had a real GitHub run yet. The implementation followed
 `docs/plans/2026-09-13-port-fake-provider.md`; read that plan (including its verification log and
 the ledger it summarizes) before touching this repository's design, rather than re-planning from
 scratch.
@@ -55,12 +58,20 @@ go test -tags e2e -count=1 -v ./e2e/      # compliance suite against a real infr
 it. The `-tags e2e` suite builds `infrata` from a sibling checkout — `$INFRATA_SRC`, default
 `../infrata` — and drives it as a subprocess; it needs that checkout present and buildable, and is
 slower than the plain suite, so it is not part of the default `go test ./...` run. (`$INFRATA_SRC`
-only chooses which infrata the CLI is built from for this suite — the plugin itself still compiles
-against `../infrata` through `go.mod`'s `replace`, so pointing `INFRATA_SRC` at a different checkout
-pairs a host built from one infrata with an SDK compiled against another.)
+only chooses which infrata the CLI is built from for this suite — locally the plugin itself still
+compiles against `../infrata` through `go.mod`'s `replace`, so pointing `INFRATA_SRC` at a different
+checkout pairs a host built from one infrata with an SDK compiled against another. CI's tag job avoids
+that: it drops the replace and builds the host from the same tag.)
 
-Release plumbing: `plugin.yaml` (infrata `PLAN.md` §31.2), `scripts/release-check`,
-`scripts/build-release`, `.github/workflows/release.yml`. `Version` defaults to `"0.0.0-dev"` and is
+Release plumbing: `plugin.yaml` (infrata `PLAN.md` §31.2; its `infrata: ">= 0.2.0"` matches `go.mod`'s
+require and is not enforced at runtime yet), `scripts/release-check`, `scripts/build-release`,
+`scripts/ci-use-infrata-tag`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
+
+**go.sum carries infrata's hashes on purpose.** CI's tag job builds under `-mod=readonly` with the
+replace dropped, so it needs them, and a local `go mod tidy` (replace present) strips them.
+`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` fails when that happens; restore with
+`scripts/ci-use-infrata-tag sum`, and run the same after bumping the infrata require (then raise
+`plugin.yaml`'s `infrata:` floor to match). `Version` defaults to `"0.0.0-dev"` and is
 stamped only by `-ldflags` at release (Ruling R9), so an unstamped build cannot silently satisfy a
 project's `plugins:` constraint or the release gate.
 
@@ -72,9 +83,13 @@ project's `plugins:` constraint or the release gate.
   Infrata's builtin `test` keeps serving those until infrata removes it.
 - Symlinked paths to the same cloud file are not unified into one lock (D5) — two different paths
   naming the same file on disk can still race.
-- `go.mod` carries `replace github.com/infrata/infrata => ../infrata` (D7), and will for as long as
-  infrata stays private (until it is feature complete, infrata PLAN.md §31.1); a sibling checkout named
-  `infrata` — what `git clone` creates — is required to build or test this repository at all.
+- `go.mod` carries `replace github.com/infrata/infrata => ../infrata` (D7) for local work, and will for
+  as long as infrata stays private (until it is feature complete, infrata PLAN.md §31.1); a sibling
+  checkout named `infrata` — what `git clone` creates — is required to build or test locally, and a
+  local result reflects that checkout, not the required release. CI drops the replace
+  (`scripts/ci-use-infrata-tag use`), which needs `GOPRIVATE`, the token, and the committed go.sum hashes.
+- Because infrata is private, `GOPRIVATE` also bypasses the checksum database: the committed go.sum
+  hash is the only thing that would notice a v0.2.0 tag being moved.
 
 ## Where the contract lives
 

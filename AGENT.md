@@ -65,12 +65,14 @@ indistinguishable from a hang.
 
 ### Depending on infrata
 
-`github.com/infrata/infrata` is not published as a fetchable module (it stays private until it is
-feature complete), so a plugin needs a `replace` directive in its `go.mod` pointing at a checkout.
-Clone infrata next to your plugin and point at the directory `git clone` creates, so a fresh clone of
-both repositories builds with no extra setup:
+Require a released infrata, and add a `replace` for local work. infrata stays private until it is
+feature complete, so fetching the module needs credentials. The `replace` points at the directory
+`git clone` creates next to your plugin, so a fresh clone of both repositories builds with no extra
+setup:
 
 ```
+require github.com/infrata/infrata v0.2.0
+
 replace github.com/infrata/infrata => ../infrata
 ```
 
@@ -78,10 +80,22 @@ Nothing else is needed: the SDK and everything it depends on is the standard lib
 there is no other third-party dependency to pull in.
 
 **A `replace` builds against whatever is on disk in `../infrata`, committed or not.** A green suite
-proves nothing about committed infrata. Build releases in CI from fresh checkouts of both
-repositories. Because infrata is private, CI needs a token to check it out beside your plugin:
-infrata-provider-fake's `.github/workflows/release.yml` uses an `INFRATA_CHECKOUT_TOKEN` secret, which
-should be a fine-grained token scoped to Contents: read-only on `infrata/infrata`.
+proves nothing about an infrata release. So CI drops the `replace` and builds the tagged module:
+
+- `GOPRIVATE=github.com/infrata/*`, so Go fetches with git and skips the public proxy and checksum
+  database, which can't see a private repository.
+- Git credentials from a secret: `git config --global
+  url."https://x-access-token:${TOKEN}@github.com/infrata/".insteadOf "https://github.com/infrata/"`,
+  with the token passed through `env`. Use a fine-grained token scoped to Contents: read-only on
+  `infrata/infrata`. A reusable workflow gets it only if its caller says `secrets: inherit`.
+- `go mod edit -dropreplace=github.com/infrata/infrata`, then build and test under the default
+  `-mod=readonly`.
+- **Commit infrata's `go.sum` hashes.** Generate them once, locally, with the `replace` dropped; a
+  hash CI writes for itself verifies nothing. `go mod tidy` run with the `replace` present strips
+  them, so guard against that with a test.
+
+infrata-provider-fake's `scripts/ci-use-infrata-tag`, `.github/workflows/ci.yml` and
+`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` are a worked example of all four.
 
 ### Keep your module path outside infrata's
 
@@ -406,7 +420,9 @@ source: https://github.com/example/infrata-plugin-hetzner
 `manifest` (checked first, before any other key), `name`, `version`, `protocol` (a list — the host
 accepts a set of supported versions), `platforms` (one `GOOS/GOARCH` per build you publish) and
 `description` are required. `infrata` is optional — a `pkg/semver` constraint on the infrata
-releases this plugin is known to work with; absent means unconstrained, never write `">= 0.0.0"` to
+releases this plugin is known to work with. Nothing enforces it at runtime today: infrata will check it
+at `infrata plugins install` (`PLAN.md` §31.3), which is designed but not built, so a mismatched host
+still loads your plugin. Absent means unconstrained, never write `">= 0.0.0"` to
 say that. `source` is optional, for a search result to link.
 
 It is read at the release **tag**, never the default branch: the file on `main` describes unreleased

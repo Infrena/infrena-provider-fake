@@ -7,8 +7,10 @@ no network and no credentials.
 
 ## Build and install
 
-This plugin builds against a sibling checkout of infrata, because infrata stays private until it is
-feature complete, so `github.com/infrata/infrata` is not a fetchable module. Lay the two repositories out side by side:
+This plugin requires a released infrata (`github.com/infrata/infrata v0.2.0` in `go.mod`), but a local
+build uses a sibling checkout of infrata instead: infrata stays private until it is feature complete,
+so fetching the module needs credentials a casual build shouldn't. Lay the two repositories out side
+by side:
 
 ```
 some-directory/
@@ -16,7 +18,9 @@ some-directory/
 └── infrata-provider-fake/   # this repository
 ```
 
-`go.mod`'s `replace github.com/infrata/infrata => ../infrata` assumes exactly that layout. Then:
+`go.mod`'s `replace github.com/infrata/infrata => ../infrata` assumes exactly that layout. It builds
+whatever that checkout holds, so check out the release `go.mod` requires (`git -C ../infrata checkout
+v0.2.0`) when you want a local result that means what CI's does. Then:
 
 ```bash
 go build -o infrata-plugin-fake ./cmd/infrata-plugin-fake
@@ -438,6 +442,28 @@ It builds infrata from `$INFRATA_SRC` (default `../infrata`, the same sibling ch
 `replace` assumes), and skips itself with an `E2E SKIPPED:` line, rather than failing, when that
 checkout is not present. Run it before every release.
 
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to `main` and every pull
+request, and release.yml calls it. It has two jobs:
+
+- **tag** (gating): does this plugin work with the infrata it declares? It drops `go.mod`'s `replace`,
+  builds against the tagged infrata module `go.mod` requires, and runs gofmt, vet, the unit suite and
+  the compliance suite against an infrata host built from that same tag. `scripts/ci-use-infrata-tag`
+  does the module setup, for both workflows.
+- **main** (advisory, never fails the run): has infrata `main` broken us? It builds through the
+  `replace` against a fresh checkout of infrata's `main` and runs both suites.
+
+Both need the `INFRATA_CHECKOUT_TOKEN` secret while infrata is private.
+
+That tag build needs infrata's hashes in `go.sum`, and `go mod tidy` run locally with the `replace`
+present strips them. The unit suite catches that (`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds`)
+and names the fix, which also restores them after you bump the infrata `require`:
+
+```bash
+scripts/ci-use-infrata-tag sum
+```
+
 ## Releasing
 
 `plugin.yaml`, at the repository root, is infrata's plugin manifest (`PLAN.md` §31.2) — what this
@@ -453,8 +479,16 @@ version: 0.1.1
 protocol: [1]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrata without a cloud account.
+# The oldest infrata release CI verifies this plugin against: go.mod's require, which ci.yml
+# builds and runs the e2e suite with. Nothing refuses a mismatched host at runtime yet; infrata
+# checks this at install (PLAN.md §31.3), which is designed but not built.
+infrata: ">= 0.2.0"
 source: https://github.com/infrata/infrata-provider-fake
 ```
+
+`infrata: ">= 0.2.0"` is the infrata release CI tests this plugin against. Today it is documentation
+and an input to the compliance suite, not a runtime check: infrata will refuse a plugin whose floor
+the running build fails at `infrata plugins install`, which is not built yet.
 
 infrata reads this file at a release tag, never at the tip of the default branch — the default
 branch's `plugin.yaml` describes code that has not shipped yet. `internal/fake.Version` is
@@ -465,9 +499,11 @@ real version number.
 Pushing a tag matching `v*` runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
 which:
 
-1. Runs `scripts/release-check <tag>`, which refuses to continue if the git tag, `plugin.yaml`'s
+1. Runs [CI](#continuous-integration) in full. Only its tag job gates the release: the tests run
+   against the infrata release `go.mod` requires, not a working tree.
+2. Switches to that same tagged infrata module (`scripts/ci-use-infrata-tag use`), then runs
+   `scripts/release-check <tag>`, which refuses to continue if the git tag, `plugin.yaml`'s
    `version:`, and the version the built binary's handshake reports disagree.
-2. Runs the full test suite, including the compliance suite above, against a real infrata checkout.
 3. Runs `scripts/build-release <version> dist`, which cross-compiles every platform `plugin.yaml`
    lists into `dist/infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz` (`.zip` for `windows`).
 4. Writes `dist/SHA256SUMS` and publishes a GitHub release with all of it attached.

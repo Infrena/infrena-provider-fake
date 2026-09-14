@@ -999,12 +999,15 @@ recognise breaks on the next such change, even though nothing else about the pro
 ## 11. Depending on infrata today
 
 `github.com/infrata/infrata` is a private repository, and it stays private until infrata is feature
-complete (`PLAN.md` §31.1, "The repository stays PRIVATE until feature complete"). So there is no
-module version to fetch. The supported setup is a `replace` directive pointing at a checkout of
-infrata next to your plugin:
+complete (`PLAN.md` §31.1, "The repository stays PRIVATE until feature complete"). Its releases are
+real module versions (`v0.1.0`, `v0.2.0`), but fetching one needs credentials. The setup this
+repository uses is two directives: a `require` naming the infrata **release** your plugin supports,
+and a `replace` pointing at a checkout of infrata next to your plugin, for local work:
 
 ```
-// go.mod:12
+// go.mod
+require github.com/infrata/infrata v0.2.0
+
 replace github.com/infrata/infrata => ../infrata
 ```
 
@@ -1021,19 +1024,63 @@ This bit this repository once. Its build saw a stale `internal/semver` that infr
 moved, because the checkout on disk wasn't what was committed (`PLAN.md` §31.1, "The repository stays
 PRIVATE until feature complete").
 
-So build releases in CI, from fresh checkouts of both repositories. That is what this repository's
-`.github/workflows/release.yml` does (`release.yml:22-35`). Locally, `git -C ../infrata status` before
-you trust a result.
+So CI must not use the `replace`. This repository's gating CI job drops it and builds against the
+infrata release `go.mod` requires, fetched as a module (`.github/workflows/ci.yml`, job `tag`). Locally,
+`git -C ../infrata status`, and check out the required tag, before you trust a result.
+
+**Recommendation:** keep a second, advisory CI job that does use the `replace`, against a fresh
+checkout of infrata's `main`. The two answer different questions: the tag job asks "does this plugin
+work with the infrata it declares?", the `main` job asks "has infrata `main` broken us?", which is an
+early warning about the next release. Only the first should gate a release. This repository marks
+the second `continue-on-error: true` (`ci.yml:99`).
 
 ### CI needs credentials for infrata
 
-Because infrata is private, a CI job can't check it out with the default token. This repository's
-release workflow checks infrata out beside itself using a repository secret, `INFRATA_CHECKOUT_TOKEN`
-(`release.yml:30-35`). Make that secret a fine-grained personal access token scoped to **Contents:
-read-only** on `infrata/infrata` and nothing else. Your plugin's CI needs the same thing: a secret
-like that, and a second `actions/checkout` step with `repository: infrata/infrata`, `path: infrata`
-and that token.
-Check out your own repository into a sibling path, so `../infrata` resolves.
+Because infrata is private, CI needs a token both to check infrata out (for the e2e host) and for Go
+to fetch the module. This repository uses one repository secret, `INFRATA_CHECKOUT_TOKEN`. Make it a
+fine-grained personal access token scoped to **Contents: read-only** on `infrata/infrata` and nothing
+else.
+
+Every out-of-tree plugin needs the same four steps while infrata is private. This repository puts
+them in `scripts/ci-use-infrata-tag use`, called from both `ci.yml` and `release.yml`:
+
+1. **`GOPRIVATE=github.com/infrata/*`** in the job's environment. Go then fetches with git directly
+   and skips the public module proxy and checksum database, neither of which can see a private
+   repository.
+2. **Git credentials from the token**, passed through `env` and never echoed:
+
+   ```bash
+   git config --global url."https://x-access-token:${INFRATA_TOKEN}@github.com/infrata/".insteadOf "https://github.com/infrata/"
+   ```
+
+3. **Drop the `replace`**: `go mod edit -dropreplace=github.com/infrata/infrata`. Then build and test
+   under the default `-mod=readonly`.
+4. **Check what resolved**: `go list -m -f '{{.Version}}{{with .Replace}} => {{.Path}}{{end}}'
+   github.com/infrata/infrata` must print exactly the required tag.
+
+Three things that are easy to get wrong:
+
+- **Commit infrata's hashes to `go.sum`.** With the `replace` dropped, `-mod=readonly` needs
+  `github.com/infrata/infrata v0.2.0 h1:…` and its `/go.mod h1:…` line. Don't have CI run `go mod
+  tidy` or `go mod download` to write them: a checksum CI generated for itself verifies nothing, and
+  because `GOPRIVATE` bypasses the checksum database, the committed hash is the only thing that
+  would notice the tag being moved. Generate them locally, once, with the `replace` dropped. `go mod
+  tidy` with the `replace` present **removes** them, so add a unit test that fails when they are
+  missing and says how to restore them (`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` in
+  `scripts/scripts_test.go`; the restore is `scripts/ci-use-infrata-tag sum`, which runs `go mod tidy`
+  on a scratch copy of `go.mod` without the `replace`). A no-argument `go mod download` records only
+  the `/go.mod` hashes, not enough to build.
+- **Read the version from `go.mod`, not from `go list -m`.** `go mod edit -json` reads the file alone,
+  so it works before any infrata checkout exists; `go list -m` loads the module graph, which with the
+  `replace` present needs `../infrata`. Use that one read for both the module and the ref of the e2e
+  host's checkout (`ci.yml:56` and `ci.yml:64`), so the two can never disagree.
+- **A reusable workflow gets no secrets unless its caller passes them.** `release.yml` calls `ci.yml`
+  with `secrets: inherit` (`release.yml:23`). Without it the token is empty and every fetch fails;
+  `scripts/ci-use-infrata-tag` refuses an empty token under GitHub Actions and says so.
+
+Check the e2e host out somewhere other than `../infrata` (this repository uses `infrata-host`, with
+`INFRATA_SRC` pointing at it). A leftover `replace` would otherwise resolve to that checkout quietly,
+and the build would never prove it can fetch the module.
 
 ### Keep your module path outside infrata's
 
@@ -1143,6 +1190,22 @@ development build of infrata is exempt, as it is from a project's own floor (`PL
 "Compatible means three things"). Validate your `infrata:` string with `semver.ParseConstraint`
 (`pkg/semver/semver.go:126`) so you use the same parser infrata will.
 
+**infrata:** nothing enforces the field at runtime today. The check belongs to `infrata plugins
+install` (`PLAN.md` §31.2, "Where infrata reads it"; designed in §31.3, not built), and the handshake
+doesn't carry it. `pkg/pluginmanifest.AllowsInfrata` exists, but nothing in infrata calls it yet. A
+host older than your floor still loads your plugin. Today the field is documentation, and whatever
+your own release gate makes of it.
+
+**infrata:** "development build" means a host reporting `0.0.0` (`AllowsInfrata`,
+`pkg/pluginmanifest/manifest.go`). Now that infrata has tags, a plain `go build` of an infrata checkout
+isn't one. Go stamps the version from git: a clean checkout at `v0.2.0` reports `0.2.0`, and one commit
+past it reports `0.2.1-0.<time>-<hash>`, which compares as `0.2.1`. Measured 2026-09-13.
+
+**Recommendation:** make the floor the release your CI builds against, and check it there. This
+repository's `infrata: ">= 0.2.0"` matches `go.mod`'s `require`. The e2e test
+`TestTheInfrataUnderTestSpeaksTheManifestsProtocol` applies `AllowsInfrata` to a host built from
+that tag, so a floor above the tested release fails CI.
+
 ### What it deliberately leaves out
 
 - **Checksums.** They can't exist until the binaries are built, so a checked-in manifest can't hold
@@ -1168,8 +1231,8 @@ publish unless they do (`PLAN.md` §31.2, "What a plugin repository owes its own
 You could write a unit test comparing `plugin.yaml` to a constant in the code. That is weaker in two
 ways. Someone can delete or skip a test, but a failing release step blocks the release. And a test
 checks source code, not the binary: it can't catch a build whose `-ldflags` stamp went wrong. The gate
-here runs as the first build step of `.github/workflows/release.yml`, right after checkout and Go
-setup (`release.yml:44-46`), before tests, builds or publishing.
+here runs in `.github/workflows/release.yml`'s `release` job, after CI has passed and the job has
+switched to the tagged infrata module, before anything is built or published (`release.yml:43-48`).
 
 ### Why `Version()` defaults to `0.0.0-dev`
 
@@ -1220,10 +1283,10 @@ directory of the same stem (`build-release:29-46`). `scripts/scripts_test.go:108
 archive is a release nobody can install.
 
 After the build, the workflow checksums every archive into a `SHA256SUMS` release asset
-(`.github/workflows/release.yml:61-63`), and then publishes (`release.yml:65-69`). The checksums live
-in the release, not the manifest, because they don't exist until the build does. Every step runs
-against a fresh checkout of infrata's `main`, fetched with `INFRATA_CHECKOUT_TOKEN`
-([section 11](#ci-needs-credentials-for-infrata)).
+(`.github/workflows/release.yml:53-55`), and then publishes (`release.yml:57-60`). The checksums live
+in the release, not the manifest, because they don't exist until the build does. The tests and every
+build run against the infrata release `go.mod` requires, fetched as a module with
+`INFRATA_CHECKOUT_TOKEN` ([section 11](#ci-needs-credentials-for-infrata)).
 
 To release: bump `version` in `plugin.yaml`, commit, tag `v<that version>`, and push the tag. If the
 tag, manifest or binary disagree, the workflow stops before publishing anything.
