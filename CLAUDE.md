@@ -37,12 +37,13 @@ dependency is one an outside author has too.
 **Built and passing.** The plugin (`internal/fake/`: cloud file, schemas, CRUD with attribute
 removal, discover/import, failure/latency injection, a per-file lock, plugin configuration) and its
 binary (`cmd/infrata-plugin-fake/`) are complete and documented, with a version-gated release
-workflow that has published v0.1.0 and v0.1.1. CI (`.github/workflows/ci.yml`, on push to `main`,
+workflow that has published v0.1.0, v0.1.1 and v0.2.0 (the first built against infrata v0.3.0 and
+speaking protocol 2, and the first cut through ci.yml's gate). CI (`.github/workflows/ci.yml`, on push to `main`,
 pull requests, and called by `release.yml`) builds against the infrata RELEASE `go.mod` requires
 (v0.3.0) in its gating `tag` job, and against infrata `main` in an advisory `main` job. Its
 `INFRATA_CHECKOUT_TOKEN` secret, which lets it check out and fetch the private `infrata/infrata`
 repository, is configured, and ci.yml's first GitHub run (34797363934) was green on both jobs; the
-release path's `secrets: inherit` has not yet run. The implementation followed
+release path's `secrets: inherit` was proven by the v0.2.0 release run (34848477674). The implementation followed
 `docs/plans/2026-09-13-port-fake-provider.md`; read that plan (including its verification log and
 the ledger it summarizes) before touching this repository's design, rather than re-planning from
 scratch.
