@@ -79,8 +79,8 @@ project's `plugins:` constraint or the release gate.
 - The `test.*` → `fake.*` rename (D1) is migrated by infrata, not here: state version 1 → 2
   (infrata `internal/state/migrations.go`) rewrites the types and the implicit `test` instance
   name. This plugin itself carries no migration code. Renaming the type prefix from `test.` to
-  `fake.` is a breaking change for any project or state file using infrata's old in-tree provider.
-  Infrata's builtin `test` keeps serving those until infrata removes it.
+  `fake.` would otherwise break any project or state file using infrata's old in-tree provider,
+  which infrata no longer ships.
 - Symlinked paths to the same cloud file are not unified into one lock (D5) — two different paths
   naming the same file on disk can still race.
 - `go.mod` carries `replace github.com/infrata/infrata => ../infrata` (D7) for local work, and will for
