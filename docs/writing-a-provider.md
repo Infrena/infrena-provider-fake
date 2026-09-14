@@ -153,7 +153,7 @@ says what the host does to the result.
 | `Provider.Update` | current and desired, each as type, address, provider ID, attributes | `(nil, nil)` becomes the same error (`adapter.go:200-202`). Otherwise rebuilt from current. |
 | `Provider.Delete` | type, address, provider ID, attributes | Error only; the host rebuilds nothing. Make deleting something already gone succeed, as the fake does (`internal/fake/provider.go:222-236`). Otherwise a resource someone removed by hand turns the next destroy into an error about a resource that no longer exists. |
 | `Provider.Discover` | the types wanted. The request also has a `Region` field, but today's host never sets it: it is always `""` (see [section 14](#regions-a-default-on-the-instance-overridden-per-resource)) | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
-| `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrata's `import` command, never by you (`internal/cli/import.go:154`). |
+| `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrata's `import` command, never by you (`internal/cli/import.go:166`). |
 | `Provider.ClassifyError` | *called in your process* | See [section 5](#5-errors-and-retries). |
 
 ### What is never sent
@@ -422,7 +422,9 @@ an optional attribute converges" (`e2e/e2e_test.go:205-213`).
 A `Requirement` says what a resource needs in order to exist, for example "a database must sit
 inside a network". Declaring one gives your users missing-dependency detection. The compiler checks
 it before any provider is called, and reports what is missing and how to fix it
-(`internal/compiler/validate.go:113-156`). A project that declares a `fake.database` and no network:
+(`internal/compiler/validate.go`, `checkRequirements`). A project that declares a `fake.database` and
+no network (here with no `providers:` block, so the database's implicit instance is named after the
+plugin, `"fake"`):
 
 ```
 $ infrata plan dev
@@ -431,9 +433,11 @@ Error: "db" is missing required network
 
   A database must sit inside a network
   Satisfied by a resource of type: fake.network
+  It must belong to the same provider instance, "fake": another instance is another account, and
+  resources in one cannot reach the other.
 
   Suggested action:
-    Add a resource of type fake.network to this configuration.
+    Add a resource of type fake.network to provider instance "fake".
 Error: configuration is not valid
 ```
 
@@ -441,12 +445,23 @@ Without the requirement, that project would plan cleanly and the user would find
 cloud's API rejected the create, halfway through an apply. `explain` lists requirements under
 `Requires:` (`internal/cli/explain.go:89-94`), shown in the output in section 3.
 
-Know what a requirement checks. It is satisfied if **any** resource of a satisfying type exists
-anywhere in the configuration. It is not a check that this resource references that one, because a
-`Requirement` names no attribute to trace (`validate.go:119-125`). The actual dependency, and so
-the order resources are created in, still comes from the reference the user writes, such as
-`network: ${network.id}`. `Optional: true` records a requirement without enforcing it
-(`validate.go:144`).
+Know what a requirement checks: it is satisfied if **any** resource of a satisfying type exists in
+the **same provider instance** — corrected 2026-09-13; it used to count types across the whole
+configuration, so a database in one account was satisfied by a network in another, which two
+instances (two accounts, §12.1) make meaningless. It is not a check that this resource references
+that one, because a `Requirement` names no attribute to trace, and it is not region-aware: a subnet
+requiring a VPC is satisfied by a VPC in any region of the same instance. The actual dependency, and
+so the order resources are created in, still comes from the reference the user writes, such as
+`network: ${network.id}`. `Optional: true` records a requirement without enforcing it.
+
+**Recommendation: treat `Requirements` as a pre-flight hint, not the correctness mechanism.** It
+checks that something of the right type exists in the same account, and nothing more — not state,
+not a region, not a traced reference. Both limits are intended, not pending: infrata's stated fix for
+either is the same one — letting a `Requirement` name the attribute it is satisfied by — and that is
+deferred until a real cloud plugin says what it needs. Model the dependency as a `Required` reference
+attribute too (`vpc_id: ${vpc.id}`), because the reference is what infrata actually validates end to
+end; a plugin that relies on `Requirements` alone will pass validation with an under-specified or
+wrong reference still in the configuration.
 
 ---
 
@@ -744,10 +759,10 @@ A user who can already use your cloud's CLI shouldn't have to configure anything
 account. Remember that a value there reaches `New` *resolved* (`pkg/provider/provider.go:33-35`). It
 may come from a variable, so it can differ between environments, and the same `providers:` entry
 may mean a different account in `staging` and `prod`. Resolve credentials inside `New`, not at
-package init. (This is infrata's current design — `plan`, `apply`, `refresh` and `destroy` all
-resolve variables in `providers:` against the environment named on the command line. `discover`
-and `import` take no environment, so they resolve only what doesn't need one and refuse anything
-else by name: see
+package init. (This is infrata's current design — `plan`, `apply`, `refresh`, `destroy` and
+`import <env>` all resolve variables in `providers:` against the environment named on the command
+line. `discover` alone takes no environment, so it resolves only what doesn't need one and refuses
+anything else by name: see
 [section 14](#regions-a-default-on-the-instance-overridden-per-resource).)
 
 **Refuse configuration keys you don't recognise, and name both the key written and the keys you
@@ -1379,62 +1394,69 @@ resources:
     region: ${dr_region}       # overridden per resource, from a variable
 ```
 
-**This is infrata's current design: `plan`, `apply`, `refresh` and `destroy` all resolve
-`providers:` against the environment named on the command line; `discover` and `import` have none
-to resolve it against.** `plan` and `apply` resolve it the ordinary way, through `compiler.Compile`.
-`refresh` and `destroy` — which never compile — now do too: they build the instance through
-`compiler.VariableScope` (`internal/compiler/compile.go`), the same stages 1-4 `Compile` shares,
-handed the environment named on the command line, so `defaults: {region: ${aws_region}}` above
-works on all four. `refresh` and `destroy` therefore now accept `--var` and `--var-file`, which they
-used to refuse outright. `plan`/`apply` run against an environment removed from `environments:` but
-still holding state — an "orphaned" environment, §6.1 — take that same state-only path with an
-EMPTY environment, because the environment's per-environment values went away with its declaration.
+**This is infrata's current design: `plan`, `apply`, `refresh`, `destroy` and `import <env>` all
+resolve `providers:` against the environment named on the command line; `discover` alone has none to
+resolve it against.** `plan` and `apply` resolve it the ordinary way, through `compiler.Compile`.
+`refresh` and `destroy` — which never compile — build the instance through `compiler.VariableScope`
+(`internal/compiler/compile.go`), the same stages 1-4 `Compile` shares, handed the environment named
+on the command line, so `defaults: {region: ${aws_region}}` above works on all four. `refresh` and
+`destroy` therefore accept `--var` and `--var-file`, which they used to refuse outright. `plan`/`apply`
+run against an environment removed from `environments:` but still holding state — an "orphaned"
+environment, §6.1 — take that same state-only path with an EMPTY environment, because the
+environment's per-environment values went away with its declaration.
 
-`discover` takes no environment at all, so it resolves only what doesn't need one — a declared
-`default:`, `variables.yml`, `vars/default.yml`, `--var` — and refuses an instance still holding an
-unresolved key BY NAME rather than guessing at it (`internal/cli/context.go`,
-`registerStateInstances`/`refuseUnresolvedInstances`, called with `""` for the environment by
-`discoveryRegistry`). **`import` takes that same environment-less path, even though `infrata import
-<environment>` names one on the command line**: `newImportCommand` builds its registry with
-`discoveryRegistry`, "the same scope discovery has" (`internal/cli/import.go`), because import
-adopts what discovery found — that environment argument picks which environment's *state* receives
-the import, not which environment's variables resolve `providers:`. So a `providers:` key that only
-an environment sets is refused by name on `import` exactly as on bare `discover`, and the fix is the
-same: `--var`.
+`import <env>` takes that same state-only path as `refresh`/`destroy`, handed *its own* environment:
+`discoveryRegistry` (`internal/cli/context.go`) takes the environment explicitly, and
+`newImportCommand` passes the one named on its own command line rather than passing none
+(`internal/cli/import.go`, corrected 2026-09-13 — it used to pass `""` here, the bug this repository
+caught: an `import dev` holding "dev" on its command line still could not resolve a per-environment
+`providers:` value, failing exactly like a bare `discover`). `discover` is the only caller that
+legitimately has no environment, and passes `""` for it.
 
-infrata's `PLAN.md` §12.1 (amended 2026-09-13) records why this is possible at all: resolving
-variables is stages 1-4 and needs no registry, no plugins, no resources and no modules, which is
-what makes it available to a command that never compiles.
+`discover` therefore resolves only what doesn't need an environment — a declared `default:`,
+`variables.yml`, `vars/default.yml`, `--var` — and refuses an instance still holding an unresolved key
+BY NAME rather than guessing at it (`internal/cli/context.go`,
+`registerStateInstances`/`refuseUnresolvedInstances`).
+
+infrata's `PLAN.md` §12.1 (amended 2026-09-13 twice) records why any of this is possible: resolving
+variables is stages 1-4 and needs no registry, no plugins, no resources and no modules, which is what
+makes it available to a command that never compiles — and why `import <env>`'s own environment was
+there to pass down all along.
 
 Checked against a built infrata with this repository's plugin, using `providers: [{plugin: fake,
-cloud: ${cloud_file}, defaults: {size: ${db_size}}}]` with `cloud_file`/`db_size` set per
-environment (`vars/dev.yml`, `vars/prod.yml`): `plan dev`, `apply dev`, `refresh dev` and `destroy
-dev --auto-approve` all resolved the instance and ran. Bare `discover` — no environment to resolve
-either variable against — refused by name:
+cloud: ${cloud_file}}]` with `cloud_file` set ONLY in `vars/dev.yml` (no `default:`, which every
+command resolves without an environment): `apply dev` created a resource, and — after hand-adding an
+untracked one to the cloud file — `import dev fake.network.net-77 --generate` resolved `cloud_file`
+from `vars/dev.yml` and imported it, with no `--var` needed. Bare `discover` — no environment to
+resolve the variable against at all — refused by name:
 
 ```
 Error: provider "fake"'s configuration key "cloud" could not be resolved
-  at infra.yml:12:5
+  at infra.yml:11:5
 
-  Its value differs per environment, and this command does not take one. Running anyway would use
-  whatever the plugin defaults to, which may be a different account than the one you mean.
+  No environment was resolved, so a value that differs per environment cannot be determined —
+  either this command takes no environment, or the one named is no longer declared in
+  configuration. Running anyway would use whatever the plugin defaults to, which may be a
+  different account than the one you mean.
 
   Suggested action:
     Pass the value with --var, or use a literal here.
 
-Error: provider "fake"'s `defaults` key "size" could not be resolved
-  ...
 Error: provider instances could not be configured
 ```
 
-`discover --var cloud_file=... --var db_size=...` resolved and ran, and so did `import dev --var
-cloud_file=... --var db_size=... <selector>` — for the reason above, `import` hits the identical
-refusal without `--var` that bare `discover` does. So give `profile`, `discover_regions` and
-`defaults: {region: …}` a way to resolve without an environment (a literal, a `default:`, or
-`vars/default.yml`) if you also run `discover` or `import`, and otherwise be ready to pass `--var`
-to those two commands specifically. A resource's own region, like `dr_vpc`'s above, reaches state as
-a plain value, so `refresh` and `destroy` never needed the variable for it — and neither does
-removing an environment and applying, which is how a user tears one down.
+(That detail text also covers the orphaned-environment case above, which is why it no longer says
+"this command does not take one" — that was true only of `discover` and was briefly false of
+`import` too.) `discover --var cloud_file=...` resolves and runs. So give `profile`,
+`discover_regions` and `defaults: {region: …}` a way to resolve without an environment (a literal, a
+`default:`, or `vars/default.yml`) if you also run bare `discover`, and otherwise be ready to pass
+`--var` to `discover` itself — `import <env>` no longer needs it for a value only an environment
+sets. A resource's own region, like `dr_vpc`'s above, reaches state as a plain value, so `refresh`
+and `destroy` never needed the variable for it — and neither does removing an environment and
+applying, which is how a user tears one down.
+
+**Import selectors don't carry a provider instance either**, which matters the moment two accounts
+exist — see [Import IDs](#import-ids) below for the ambiguity refusal and `--provider`.
 
 ### Discover against a real API
 
@@ -1461,26 +1483,44 @@ attribute on a declared type fails the whole discovery.
 
 **infrata:** `infrata import <env> <type>.<provider id>` doesn't pass an arbitrary string to your
 plugin. It runs discovery, looks the selector up among the results as `<type>.<provider id>`, and
-calls `Import` with the discovered type and provider ID (`internal/cli/import.go:220-248`,
-`selectForImport`, and `:150`). A selector discovery didn't return is refused with `not found by
+calls `Import` with the discovered type and provider ID (`internal/cli/import.go:161`,
+`selectForImport` at `:232`). A selector discovery didn't return is refused with `not found by
 discovery`. A slash in the ID is fine: the selector is matched whole, so
 `aws.vpc.us-east-1/vpc-0abc123` works if `Discover` returned `us-east-1/vpc-0abc123`. **A resource in
 a region your instance doesn't scan can't be imported at all.** `selectForImport` only matches what
 `Discover` returned, and `Discover` only visits `discover_regions`. A VPC sitting in a region missing
 from that list never becomes a selector to import — there is no separate error naming the region, it
-simply isn't offered. **A selector has no way to name a provider instance, either**: `selectForImport`
-keys its candidates by `<type>.<provider id>` alone, so if two instances of your plugin — two AWS
-accounts, say — each discover a resource with the same ID, one silently wins the selector and the
-other is unreachable by `import`.
+simply isn't offered.
+
+**A selector names no provider instance** — `<type>.<provider id>` is the whole syntax — and a
+provider ID is unique within an account, not across them (§12.1), so two instances of your plugin can
+each hold `net-1`. `narrowToSelectors` (`internal/cli/import.go:260`, corrected 2026-09-13) refuses an
+ambiguous selector rather than silently picking one, naming every instance that holds it:
+
+```
+$ infrata import dev fake.network.net-1
+Error: fake.network.net-1 exists in more than one provider instance: acct1, acct2
+A selector names no instance, and a provider ID is unique within an account rather than across
+them, so this would adopt one of them arbitrarily.
+Narrow it with --provider <instance>
+```
+
+`import <env> --provider <instance>` narrows the whole command to that instance, so it also answers
+"adopt everything discovery found in this one account" when no selectors are given at all — the
+no-selector form otherwise has no way to say that. A `--provider` naming an instance discovery found
+nothing for is refused by name rather than treated as an empty, successful import (a typo would
+otherwise silently import zero resources). Verified against a built infrata: two fake instances each
+holding an untracked `net-1`, `import dev fake.network.net-1` produced the error above, and `import
+dev fake.network.net-1 --provider acct2` then imported it.
 
 **Recommendation:**
 
 - **Keep provider IDs unique where you can, and prefer the `<region>/<id>` form everywhere IDs
   appear** — in `Discover`, `Import`, and the provider ID you return from `Create` — with AWS's own
   IDs: `vpc-…`, `subnet-…`, `sg-…`, or an RDS instance identifier. That resolves a collision within
-  one account, but not across two accounts that both discover the same bare ID: the selector still
-  can't tell your instances apart, so a cross-account collision is a real risk to design around, for
-  example by making your IDs carry the account too.
+  one account. A cross-account collision no longer picks a silent winner — it is refused, naming both
+  instances, and the fix is `--provider <instance>` — but a project importing from more than one AWS
+  account should still expect the collision and reach for `--provider` rather than a bare selector.
 - **Check the type against the ID and refuse a mismatch**, as the fake does
   ([`Discover` and `Import`](#discover-and-import)). `aws.subnet` with `us-east-1/vpc-0abc123` names a
   VPC. Refuse it, naming both, before any API call. Where the prefix doesn't settle it, the describe
@@ -1619,19 +1659,38 @@ attribute:
 `Description` (`pkg/schema/definition.go:13-18`). `checkRequirements` checks every non-optional
 requirement before any provider is called. It reports `"<address>" is missing required <name>`, the
 description, `Satisfied by a resource of type: …`, and suggests adding one
-(`internal/compiler/validate.go:126-156`). Know what it checks, which matters more on AWS than on the
-fake:
+(`internal/compiler/validate.go:151-197`, diagnostic at `:188`). Know what it checks, which matters
+more on AWS than on the fake: **a requirement checks that something of the right type exists in the
+same account, and nothing more.**
 
-- **Satisfied by existence, anywhere in the configuration.** Any resource of any listed type
-  satisfies it (`validate.go:127-130`, `144`). It isn't a check that *this* subnet references *that*
-  VPC, and not that they share an instance or region: a subnet in `eu-west-1` is satisfied by a VPC
-  in `us-east-1`. The order resources are created in still comes from references like
-  `vpc: ${vpc.id}` ([section 4](#4-requirements)).
-- **State doesn't count.** Only resources in the resolved configuration satisfy a requirement
-  (`validate.go:113-125`, the comment on `checkRequirements`). A resource that exists in AWS but
-  isn't declared, such as a VPC another team owns, doesn't satisfy one.
+- **Satisfied per provider instance, not across the project** — corrected 2026-09-13
+  (`validate.go:113-151`, the comment on `checkRequirements`; keyed by instance+type at `:158`).
+  Two instances are two accounts (§12.1): a subnet in one account's `us-east-1` no longer satisfies a
+  VPC requirement by way of a VPC that exists only in a different account. It isn't a check that
+  *this* subnet references *that* VPC, either — `Requirement` names no attribute to trace. The order
+  resources are created in still comes from references like `vpc: ${vpc.id}`
+  ([section 4](#4-requirements)).
+- **Not region-aware, within an instance.** A requirement names types, not attributes, so a subnet
+  requiring a VPC is satisfied by a VPC in any region of the *same* account — a subnet in
+  `eu-west-1` is still satisfied by a VPC in `us-east-1` of that account. This is an intended limit,
+  not a pending one: the real guarantee for region correctness is the reference (`vpc: ${vpc.id}`),
+  which stages 6 and 7 validate.
+- **State doesn't count, and this is intended too.** Only resources in the resolved configuration
+  satisfy a requirement. A resource that exists in AWS but isn't declared, such as a VPC another team
+  owns, doesn't satisfy one. `validate` contacts nothing, by design; moving this check to a stage
+  that has state would make `validate` either weaker or state-dependent.
 
-**Recommendation:** declare what AWS itself would reject a create without:
+Both remaining limits would be answered by the same change — letting a `Requirement` name the
+attribute it is satisfied by — and infrata is deliberately not guessing at that vocabulary before a
+real cloud plugin says what it needs.
+
+**Recommendation: `Requirements` is a pre-flight hint, not the correctness mechanism.** Declare what
+AWS itself would reject a create without, but also model the dependency as a `Required` reference
+attribute (`vpc_id: ${vpc.id}`) on every resource that needs one — that reference is what infrata
+actually enforces end to end. A plugin that treats `Requirements` alone as the guarantee gets an
+under-specified reference past `validate`: a subnet whose requirement is satisfied by *some* VPC in
+its account can still carry a `vpc_id` pointing at the wrong one, or a literal ID instead of a
+reference, and nothing here catches it.
 
 ```go
 // aws.subnet
@@ -1653,8 +1712,8 @@ Requirements: []schema.Requirement{
 },
 ```
 
-A project that declares an `aws.subnet` and no VPC then fails before anything touches AWS, in the
-same shape as the fake's example in section 4:
+A project that declares an `aws.subnet` and no VPC in the same provider instance then fails before
+anything touches AWS, in the same shape as the fake's example in section 4:
 
 ```
 Error: "private_a" is missing required vpc
@@ -1662,14 +1721,16 @@ Error: "private_a" is missing required vpc
 
   A subnet must be created inside a VPC
   Satisfied by a resource of type: aws.vpc
+  It must belong to the same provider instance, "main": another instance is another account, and
+  resources in one cannot reach the other.
 
   Suggested action:
-    Add a resource of type aws.vpc to this configuration.
+    Add a resource of type aws.vpc to provider instance "main".
 ```
 
 (Illustrative, not a captured run: there is no AWS plugin to run yet. The wording comes from
-`validate.go:147-153`, the same code that produced the fake's real output in section 4. The address,
-position and description would come from the project and the schema.)
+`validate.go:180-193`, the same code that produced the fake's real output in section 4. The address,
+instance name, position and description would come from the project and the schema.)
 
 Use `Types` with more than one entry where AWS really does accept alternatives. Where users commonly
 point at infrastructure they don't manage with infrata, such as an existing VPC passed in as a plain

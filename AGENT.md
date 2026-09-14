@@ -310,8 +310,8 @@ has write scope"` is.
   config files — so that a user who can already use their cloud's CLI does not have to configure
   anything twice. Accept explicit configuration in `providers:` as an override, and remember it may
   come from a variable, so it can differ per environment. (This is current infrata design — see
-  §10: `plan`, `apply`, `refresh` and `destroy` all resolve those variables against the
-  environment named on the command line. `discover` and `import` take no environment and resolve
+  §10: `plan`, `apply`, `refresh`, `destroy` and `import <env>` all resolve those variables against
+  the environment named on the command line. `discover` alone takes no environment, and resolves
   only what doesn't need one, refusing anything else by name.)
 
 ---
@@ -479,23 +479,25 @@ evidence, and AWS worked through as an example.
   from a configuration key, such as `discover_regions` — keep it resolvable without an environment
   (a literal, a variable with a `default:`, or one set in `vars/default.yml`), because `discover`
   takes no environment; a value only an environment sets needs `--var` on `discover` itself.
-- **`providers:` variables resolve on `plan`, `apply`, `refresh` and `destroy`, against the
-  environment named on the command line** (infrata `PLAN.md` §12.1, amended 2026-09-13). `refresh`
-  and `destroy` now accept `--var`/`--var-file`, having refused them outright before. `discover`
-  and `import` build the instance with NO environment at all — `import` takes the same path as
-  bare `discover` ("the same scope discovery has," `internal/cli/import.go`) even though `infrata
-  import <environment>` names one, because that argument selects which environment's *state* gets
-  the import, not which environment's variables resolve `providers:`. So a `providers:` key that
-  only an environment sets is refused BY NAME on both `discover` and `import`, naming the key and
-  suggesting `--var`. `plan`/`apply` against an orphaned environment (removed from `environments:`
-  but still holding state) take that same no-environment path. Give a per-environment `providers:`
-  value a `default:` or a `vars/default.yml` entry if `discover`/`import` must resolve it too,
-  or pass `--var` to those two commands specifically.
+- **`providers:` variables resolve on `plan`, `apply`, `refresh`, `destroy` and `import <env>`,
+  against the environment named on the command line** (infrata `PLAN.md` §12.1, amended
+  2026-09-13; `import`'s own environment fixed in the same amendment, `internal/cli/context.go`'s
+  `discoveryRegistry`). `refresh` and `destroy` accept `--var`/`--var-file`, having refused them
+  outright before. `discover` alone builds its instance with NO environment at all — it is the one
+  command that has none to give — so a `providers:` key that only an environment sets is refused BY
+  NAME on `discover`, naming the key and suggesting `--var`. `plan`/`apply` against an orphaned
+  environment (removed from `environments:` but still holding state) take that same no-environment
+  path. Give a per-environment `providers:` value a `default:` or a `vars/default.yml` entry if
+  bare `discover` must resolve it too, or pass `--var` to `discover` itself.
 - **Discover:** only the requested types, one API family per type; paginate; check `ctx` between
   pages; include resources infrata did not create.
 - **Import:** `infrata import` picks from what `Discover` returned, matched as
   `<type>.<provider id>`. So use one ID form everywhere, carrying anything `Import` needs that isn't in
-  the ID alone (for AWS, `<region>/<id>`). Refuse an ID of the wrong type.
+  the ID alone (for AWS, `<region>/<id>`). Refuse an ID of the wrong type. A selector names no
+  provider instance, so a provider ID your plugin issues twice across two instances (two accounts) is
+  refused by `import` as ambiguous rather than silently resolved — `--provider <instance>` is the
+  user's way to narrow it. Keep IDs unique within an account; a cross-account collision is a real risk
+  to design around, since the selector still can't tell instances apart.
 - **Classify SDK errors against §5:** a throttle AWS refused before acting → `SafeToRetry`; a server
   fault, timeout or connection lost after sending → `ConditionallyRetryable`; validation, access
   denied, not-found on a mutation, anything unrecognised → `NotSafeToRetry`.
@@ -507,8 +509,15 @@ evidence, and AWS worked through as an example.
   just-created resource as gone on a single `NotFound`: retry briefly, or return an error.
 - **Write-only attributes** the API never returns, such as a database master password: carry them
   forward from `current` in `Read`. Otherwise every plan proposes an update.
-- **Requirements** are satisfied by any resource of a listed type anywhere in configuration, not by
-  state and not by a reference. Declare what the cloud would reject a create without.
+- **Requirements** are satisfied by any resource of a listed type in the SAME provider instance, not
+  by state, and not region-aware (a subnet's `vpc` requirement is satisfied by a VPC in any region of
+  that instance) — corrected 2026-09-13, `internal/compiler/validate.go`'s `checkRequirements`.
+  Declare what the cloud would reject a create without.
+- **Recommendation: `Requirements` is a pre-flight hint, not the correctness mechanism.** It cannot
+  trace a specific edge — a `Requirement` names no attribute — so still model the dependency as a
+  `Required` reference attribute too (`vpc_id: ${vpc.id}`), which is what infrata actually validates
+  and enforces. Treating the hint as the guarantee leaves references under-specified: a project can
+  pass `checkRequirements` while a resource still points at the wrong VPC, or none at all.
 - **Test without an account:** a narrow interface over the SDK client implemented twice, or an
   `httptest.Server` via the SDK's endpoint override. Put any live-account suite behind its own build
   tag and credentials, never in the default `go test ./...`.
