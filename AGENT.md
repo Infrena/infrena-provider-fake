@@ -545,6 +545,9 @@ evidence, and AWS worked through as an example.
       it into state; it does not print a diff)
 - [ ] Removing an optional attribute from configuration converges: apply, then `plan` shows no
       changes
+- [ ] Every attribute `Read` always reports is `Required`, `Computed` or given a matching default,
+      and an empty optional value (such as no tags) is omitted rather than returned as `{}`:
+      otherwise an unedited project plans a change on every run ("removed from configuration")
 - [ ] An absolute path in configuration is used as written
 - [ ] `plugin.yaml` is present, and its `name`/`version`/`protocol` agree with the code
 - [ ] The release gate refuses a tag, manifest and binary that disagree

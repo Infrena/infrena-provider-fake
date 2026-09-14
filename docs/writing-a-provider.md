@@ -383,6 +383,32 @@ account and project. A function cannot cross a pipe, and the one use it had was 
 other things. Either it is the user's choice, in which case make it a variable they can see in
 configuration, or your cloud decides it, in which case make it `Computed` and report it.
 
+### An attribute `Read` reports but configuration omits
+
+The planner diffs in both directions. An attribute configuration sets but `Read` doesn't report
+plans a change, "not set on the resource" (`internal/planner/diff.go:90-96`). The converse holds
+too: an attribute `Read` reports but configuration doesn't set plans a change with the reason
+"removed from configuration", unless the schema marks it `Computed` or doesn't define it at all
+(`diff.go:36-48`, `diffAttributes`). If that attribute is `ForceNew`, the change is a **replace**
+(`forcesReplacement`, `diff.go:251`). A `Default`, or an instance's `defaults:`, is filled into
+configuration before the diff (`internal/compiler/schema.go`, `applyDefaults` and
+`applyInstanceDefaults`), so it prevents the change only when it equals what `Read` reports.
+
+Adding `"tags": {}` by hand to the fake cloud file, for a database whose configuration sets no
+tags, gives:
+
+```
+  ~ fake.database.db
+      tags: {} -> (absent)
+
+Plan: 0 to create, 1 to update, 0 to replace, 0 to destroy, 0 to forget.
+```
+
+So an attribute `Read` always reports must be `Required`, `Computed`, or have a default that matches
+what `Read` reports. Omit an empty optional value from what `Read` returns; don't return it as `{}`
+or `""`. The "removed from configuration" path is also what removes a real attribute a user deleted
+from configuration, through [the `Update` contract](#the-update-contract).
+
 ### The `Update` contract
 
 `Update` receives the resource as it is (`current`) and as configuration wants it (`desired`). Make
@@ -1541,9 +1567,23 @@ three classes is never retried.
 | What happened | How to recognise it (SDK v2) | Classify as |
 | --- | --- | --- |
 | Throttled: AWS refused the request before acting on it | `errors.As(err, &apiErr)` with `apiErr smithy.APIError`, and `apiErr.ErrorCode()` is a key of `retry.DefaultThrottleErrorCodes` (for example `Throttling`, `RequestLimitExceeded`, `TooManyRequestsException`) | `SafeToRetry` |
-| A server fault, a timeout, or a connection lost after the request may have been sent | `apiErr.ErrorFault() == smithy.FaultServer`; `errors.Is(err, context.DeadlineExceeded)`; a `net.Error` in the chain | `ConditionallyRetryable` |
+| A server fault, a timeout, or a connection lost after the request may have been sent | `errors.As(err, &re)` with `re *smithyhttp.ResponseError` (or `*awshttp.ResponseError`, which embeds it), and `re.HTTPStatusCode() >= 500`; `errors.Is(err, context.DeadlineExceeded)`; a `net.Error` in the chain | `ConditionallyRetryable` |
 | Validation, access denied (`UnauthorizedOperation`, `AccessDenied…`), not found on a mutation, a malformed ID | any other `smithy.APIError` | `NotSafeToRetry` |
 | Anything you don't recognise | — | `NotSafeToRetry` |
+
+**Check the rows in order, throttle first.** EC2's API reference ("Error codes") lists
+`RequestLimitExceeded` among its *server* error codes, which carry a 500-series status, so a status
+check that ran first would classify a throttle `ConditionallyRetryable`.
+
+**Why the status code, not `apiErr.ErrorFault()`.** The EC2 SDK package declares no modelled error
+types: every operation's error deserializer (for example `awsEc2query_deserializeOpErrorCreateVpc`)
+returns `&smithy.GenericAPIError{Code, Message}` with `Fault` unset, so `ErrorFault()` is
+`FaultUnknown` for every EC2 error. Services with modelled exceptions do set it on those: IAM's
+`types.ServiceFailureException.ErrorFault()` returns `smithy.FaultServer`. But a code that isn't
+modelled falls through to the same `GenericAPIError` in IAM, Route 53 and RDS too. `ErrorFault` is
+unreliable across services. The status is not: `awshttp.ResponseErrorWrapper` wraps every error that
+came with an HTTP response. (Checked in `service/ec2` v1.332.0, `service/iam` v1.64.0,
+`service/route53` v1.70.0, `service/rds` v1.129.0, `aws-sdk-go-v2` v1.47.0, `smithy-go` v1.28.1.)
 
 Mapping a server fault to `ConditionallyRetryable` rather than `SafeToRetry` is the safe default,
 not a hedge: `ClassifyError` sees only the `error` value, and has no way to know whether the request
@@ -1569,7 +1609,9 @@ with two backoff schedules multiplied. Choose deliberately:
   `CreateVpc` connection drops after AWS acted, the SDK's retry makes a second VPC that nothing
   records. `CreateVpc` isn't in EC2's list of calls that accept a `ClientToken`. Disable SDK retries
   for that call, with `func(o *ec2.Options) { o.RetryMaxAttempts = 1 }` or a client built with
-  `aws.NopRetryer`, and classify the failure honestly so infrata decides.
+  `aws.NopRetryer`. A per-call `RetryMaxAttempts` equal to the client's own is skipped
+  (`finalizeOperationRetryMaxAttempts` wraps the retryer only when the value differs), which is
+  harmless, since the client already makes that many attempts. Then classify the failure honestly so infrata decides.
 - **Where the API accepts a client token** (EC2 lists `RunInstances`, `CreateNatGateway` and
   `CreateRouteTable`, among others, in "Ensuring idempotency in Amazon EC2 API requests"), set one.
   A retry with the same token doesn't act twice.
@@ -1629,7 +1671,6 @@ attribute:
 		"cidr":   {Kind: value.KindString, Required: true, ForceNew: true, Description: "Primary IPv4 CIDR block"},
 		"tags":   {Kind: value.KindMap, Description: "Tags"},
 		"id":     {Kind: value.KindString, Computed: true, Description: "VPC ID, e.g. vpc-0abc123"},
-		"arn":    {Kind: value.KindString, Computed: true, Description: "VPC ARN"},
 	},
 	Capabilities: schema.Capabilities{Create: true, Read: true, Update: true, Delete: true, Import: true},
 	ImportID:     schema.ImportSpec{Description: "<region>/<vpc id>, e.g. us-east-1/vpc-0abc123"},
@@ -1642,7 +1683,8 @@ attribute:
 - **`tags` updates in place.** Tags change without replacing anything, so no `ForceNew`. Remember the
   [`Update` contract](#the-update-contract): delete the tags `desired` no longer has, don't only
   add.
-- **IDs and ARNs are `Computed`.** AWS assigns them. A user who sets one gets "is computed and cannot
+- **IDs are `Computed`.** AWS assigns them, and so are ARNs where the API returns one
+  (`types.Subnet` has `SubnetArn`; `types.Vpc` has no ARN field, so the sketch declares none). A user who sets one gets "is computed and cannot
   be set".
 - **An RDS master password is `Sensitive`**, and it needs one more thing: AWS never returns it.
   `rds/types.DBInstance` has `MasterUsername` and `MasterUserSecret`, but no password field. The
@@ -1652,6 +1694,14 @@ attribute:
   forward from `current`**, since the API can't tell you it changed. That is a legitimate use of
   `current`. (Carrying *bookkeeping* forward is the host's job, [section 9](#9-what-the-host-enforces-so-you-dont).)
   Or offer RDS's managed secret (`MasterUserSecret`) and keep the password out of state entirely.
+- **Recommendation: declare everything AWS always returns.** This is the converse of the password
+  case ([section 3](#an-attribute-read-reports-but-configuration-omits)): an attribute that `Read`
+  fills from every API response, but that configuration may omit and that isn't `Computed`, plans a
+  change on every run. An optional `availability_zone` on a subnet would be the worst case. EC2
+  always returns it, and it is `ForceNew`, so every plan would propose a replacement. Make it
+  `Required`, or `Computed` if AWS chooses it. Likewise, when `DescribeVpcs` returns no tags, leave
+  `tags` out of the state `Read` returns. Returning it as `{}` makes every untagged VPC plan
+  `tags: {} -> (absent)`.
 
 #### Requirements are where a real cloud leans hardest
 
