@@ -172,6 +172,13 @@ indistinguishable from "nothing happened", and if the call did take effect then 
 exists that nothing points at — unfindable by a later plan or destroy. If you cannot determine the
 created state, return an error saying that.
 
+**Recommendation:** report what the API told you; if you cannot determine an attribute, prefer an
+error over a guess, and an unknown over an invented value. The fake's `database.Create` returns
+`endpoint` as a known value rather than leaving it unknown, because the SDK gives it that value to
+report (`internal/fake/provider.go:305`). An unknown you return is legitimate — that's how a
+computed attribute the API hasn't reported yet is recorded — but it makes the next plan noisier,
+since nothing can be compared against it until a later `Read` fills it in.
+
 Return `ErrNotImplemented` for a capability you do not offer, and say so in `Capabilities`.
 
 ---
@@ -533,6 +540,8 @@ evidence, and AWS worked through as an example.
       place; `Sensitive` on every secret
 - [ ] No schema holds a function; every `Default` is a datum of its declared `Kind`
 - [ ] `Create` and `Update` never return `(nil, nil)`
+- [ ] Values decode and encode through `pkg/value`, never a hand-rolled decoder that rejects a wire
+      field it doesn't recognise — the host adds those additively, without a protocol bump
 - [ ] Unknown configuration keys are refused, naming what is accepted
 - [ ] `ClassifyError` defaults to `NotSafeToRetry` for anything unrecognised
 - [ ] Nothing is ever written to stdout

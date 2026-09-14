@@ -213,6 +213,15 @@ it. The host refuses to guess, and says so to the user:
 If your cloud's create call succeeds but you can't read back what it made, return an error that says
 so and includes whatever ID you have.
 
+**Recommendation: report what the API told you, not a guess.** If you cannot determine an attribute,
+prefer an error over inventing a value, and prefer returning it unknown over inventing one — nothing
+in the adapter checks that a returned value is known, and state legitimately stores an unknown
+attribute a provider hasn't reported (`internal/state/testdata/state-v2.json`'s `endpoint`, asserted
+still-unknown by `golden_test.go:136`). But an unknown you didn't have to return makes the next plan
+noisier, since nothing can compare against it until a later `Read` fills it in — the fake's
+`database.Create` returns `endpoint` as a known value for exactly this reason
+(`internal/fake/provider.go:305`).
+
 ### `Discover` and `Import`
 
 `Discover` answers "what exists?", and that includes resources infrata did not create, which is the
@@ -977,6 +986,13 @@ infrata's own versioning rules, a minor release may add a protocol version but m
 one, and only a major release may drop one (`PLAN.md` §61.1). If the set no longer includes your
 version, the user gets an error naming your plugin, its path, both sides' versions, and which one to
 upgrade (`internal/pluginhost/errors.go:23-46`).
+
+Because of that, `pkg/pluginproto` "changes additively, and any removal bumps `protocol`" (`PLAN.md`
+§31.1, "Handshake and version") — a new optional field on the wire is not a protocol bump. `pkg/value`
+picked up exactly such a field: an unknown value may now carry the expression that will produce it,
+added `omitempty` with no version change (infrata commit `ca9db09`). Decode and encode values through
+`pkg/value` itself, never a hand-rolled or strict decoder — one that rejects a key it doesn't
+recognise breaks on the next such change, even though nothing else about the protocol moved.
 
 ---
 
