@@ -175,7 +175,7 @@ type Provider interface {
 | --- | --- | --- |
 | `Read` | current state, or `(nil, nil)` if it no longer exists | `(nil, nil)` is how a deleted resource is reported; it is not an error |
 | `Create` | the created resource, **never `(nil, nil)`** | see below |
-| `Update` | the updated resource, **never `(nil, nil)`** | make the resource match `desired` — including removing what `desired` no longer has; `desired` never contains computed attributes, so keep those |
+| `Update` | the updated resource, **never `(nil, nil)`** | make the resource match `desired` — including removing what `desired` no longer has; `desired` carries only the computed values infrata has observed, so never delete a computed attribute just because `desired` lacks it |
 | `Delete` | error only | deleting something already gone should succeed |
 | `Discover` | everything that exists of the requested types | including resources infrata does not manage. `DiscoverRequest` carries only `Types` — there is no region field; a plugin that scans several regions takes them from its own instance `config:` (§10) |
 | `Import` | one resource by the cloud's own ID | `(nil, nil)` becomes "no such resource" |

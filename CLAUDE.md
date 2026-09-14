@@ -41,7 +41,8 @@ workflow that has published v0.1.0 and v0.1.1. CI (`.github/workflows/ci.yml`, o
 pull requests, and called by `release.yml`) builds against the infrata RELEASE `go.mod` requires
 (v0.3.0) in its gating `tag` job, and against infrata `main` in an advisory `main` job. Its
 `INFRATA_CHECKOUT_TOKEN` secret, which lets it check out and fetch the private `infrata/infrata`
-repository, is configured; ci.yml has not had a real GitHub run yet. The implementation followed
+repository, is configured, and ci.yml's first GitHub run (34797363934) was green on both jobs; the
+release path's `secrets: inherit` has not yet run. The implementation followed
 `docs/plans/2026-09-13-port-fake-provider.md`; read that plan (including its verification log and
 the ledger it summarizes) before touching this repository's design, rather than re-planning from
 scratch.

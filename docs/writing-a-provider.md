@@ -507,8 +507,10 @@ the resource match `desired`. That includes **removing** anything `desired` no l
 
 Merging instead is the easy mistake. If a user deletes `tags:` from configuration, a merging `Update`
 reports success but leaves the tags in place, and every later plan proposes removing them again,
-forever. The one exception: `desired` never contains computed attributes, so a remove-everything-
-not-in-desired loop must keep those:
+forever. The one exception is computed attributes. infrata fills `desired` with the computed values
+it has observed (`afterAttributes` in `internal/planner/diff.go`), but a computed value it has never
+observed is simply absent. Absent there means "not known", not "remove it", so a
+remove-everything-not-in-desired loop must keep computed attributes:
 
 ```go
 // internal/fake/provider.go:201-215
