@@ -14,7 +14,9 @@ import (
 // ValidateAll, not only each Validate: a References names another type and attribute, and whether
 // those exist is a fact about the whole set. infrena's registry runs ValidateAll when the CLI loads
 // a plugin, but plugintest.Open (pluginhost) runs only the per-definition Validate, so a dangling
-// References passes Open and nothing else in the plain suite would catch it.
+// References passes Open and nothing else in the plain suite would catch it. The infrena session
+// has confirmed this gap and raised a fix. Keep this call even after plugintest runs ValidateAll:
+// it is cheap, and it states the plugin's own guarantee rather than borrowing the harness's.
 func TestEveryTypeIsValidAndPrefixed(t *testing.T) {
 	defs := definitions()
 	if len(defs) != 3 {

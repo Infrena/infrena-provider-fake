@@ -595,6 +595,14 @@ different axes. A `Requirement` says "a database needs *some* network to exist" 
 attribute; `References` says "*this* attribute holds a network's id". infrena does not derive one from
 the other yet (`PLAN.md` §14.3, "not yet reconciled"), so keep declaring both.
 
+**Adding `References` to an attribute that already exists is a breaking change for your users.**
+Declaring it also type-checks the explicit spelling. Before, `network: ${app.url}` compiled. After,
+it is refused, because `app` is not a `fake.network`. So configuration your users already wrote,
+and may already have applied, can stop compiling. infrena v0.6.0 itself breaks nobody, because no
+plugin declared anything before it. Your first release that adds declarations to existing attributes
+does, though. Version it as a breaking release, and say in its release notes which attributes gained
+a reference. A reference on a brand-new attribute breaks nothing.
+
 **Refused at load** (`pkg/schema/definition.go`):
 
 - **A dangling `Type` or `Attribute`:** `fake.database: attribute "network" refers to fake.network.ident, and fake.network has no attribute "ident"`.

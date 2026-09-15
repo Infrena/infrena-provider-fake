@@ -625,6 +625,8 @@ evidence, and AWS worked through as an example.
 - [ ] `References` on every attribute that holds another resource's identifier, naming the exact
       target attribute, and on nothing else (not a URL or connection string); `schema.ValidateAll`
       passes on your definitions in a unit test
+- [ ] Adding `References` to an attribute that already exists is a breaking release for your users
+      (it type-checks `${x.attr}` they already wrote); version and release-note it as one
 - [ ] `Fields` only on a map whose keys you genuinely know; tags and labels stay open (nil)
 - [ ] Declaring `References` or `Fields` means requiring infrena >= v0.6.0, `protocol: [3]`, and an
       `infrena: ">= 0.6.0"` floor
