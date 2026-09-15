@@ -645,6 +645,14 @@ announcing 3 by name instead. A plugin that declares either must require infrena
 neither and stays on an older SDK keeps announcing 2 or 1, which v0.6.0 still accepts
 (`Supported = {3, 2, 1}`).
 
+**If an attribute that declares `References` also has `Aliases`, the floor is infrena v0.6.2.** On
+v0.6.0 and v0.6.1 the compiler looked up the consuming attribute's declaration by the name as
+written, not its canonical name. So a user who wrote the alias, `vpc: ${vpc}`, was told the
+attribute "declares no reference", while the canonical `vpc_id: ${vpc}` worked. v0.6.2 canonicalises
+first (`internal/compiler/bind.go`). A plugin that combines the two should require v0.6.2 and set
+`infrena: ">= 0.6.2"`. Otherwise its manifest vouches for hosts that give its users that
+misleading error. The fake declares no aliases, so its `>= 0.6.0` stands.
+
 ### The `Update` contract
 
 `Update` receives the resource as it is (`current`) and as configuration wants it (`desired`). Make

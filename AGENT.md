@@ -283,7 +283,8 @@ top-level declaration is ever consulted), and `Fields` on an attribute that is n
 
 **Declaring either needs infrena v0.6.0:** they travel in the protocol 3 schema, which an older host
 would decode leniently and silently drop. Require v0.6.0, write `protocol: [3]` and an
-`infrena: ">= 0.6.0"` floor.
+`infrena: ">= 0.6.0"` floor. If an attribute has both `References` and `Aliases`, make the floor
+`>= 0.6.2`: before v0.6.2, writing the alias (`vpc: ${vpc}`) wrongly reported "declares no reference".
 
 `Requirements` is what gives a user missing-dependency detection: infrena reports what is missing,
 with a suggested fix, instead of letting your API call fail.
