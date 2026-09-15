@@ -254,6 +254,55 @@ func TestTheWorkflow(t *testing.T) {
 	})
 }
 
+// TestAWholeResourceReferenceIsFilledInFromTheDeclaration. infrena PLAN.md §14.3: fake.database's
+// network declares that it holds a fake.network's id, so `network: ${network}` compiles as
+// `${network.id}`. Remove that declaration and this fixture stops compiling — infrena's "passes a
+// resource to an attribute that declares no reference", naming the `${network.<attribute>}` fix —
+// because the engine never guesses which attribute a bare resource means. So the apply below
+// passing, with the database holding the network's real id, is evidence the declaration crossed the
+// protocol and the host acted on it.
+func TestAWholeResourceReferenceIsFilledInFromTheDeclaration(t *testing.T) {
+	dir := project(t, "references")
+	cloud := filepath.Join(dir, ".infra", "fake-cloud.json")
+
+	t.Run("explain shows what network refers to", func(t *testing.T) {
+		expect(t, dir, 0, []string{"(refers to fake.network.id)"}, "explain", "fake.database")
+	})
+	t.Run("apply fills in the network's id", func(t *testing.T) {
+		expect(t, dir, 2, []string{"Apply complete: 3 applied, 0 failed"}, "apply", "dev", "--auto-approve")
+		data, err := os.ReadFile(cloud)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		var netID, dbNetwork any
+		for _, r := range resourcesOf(doc) {
+			obj := r.(map[string]any)
+			attrs := obj["attributes"].(map[string]any)
+			switch obj["type"] {
+			case "fake.network":
+				netID = attrs["id"]
+			case "fake.database":
+				dbNetwork = attrs["network"]
+			}
+		}
+		if s, _ := netID.(string); s == "" || dbNetwork != netID {
+			t.Fatalf("the database's network is %#v, want the network's id %#v\n%s", dbNetwork, netID, data)
+		}
+		if ops := planOps(t, dir); len(ops) != 0 {
+			t.Fatalf("re-plan after apply proposes %v, want none", ops)
+		}
+	})
+	t.Run("a resource of the wrong type is a compile error", func(t *testing.T) {
+		body, _ := os.ReadFile(filepath.Join(dir, "infra.yml"))
+		writeFile(t, filepath.Join(dir, "infra.yml"), strings.Replace(string(body), "network: ${network}", "network: ${app}", 1))
+		expect(t, dir, 1, []string{`network refers to fake.network, and "app" is fake.application`}, "plan", "dev")
+	})
+}
+
 // TestTwoInstancesKeepSeparateClouds. `cloud:` stands in for an account: two instances of one
 // plugin, served by one process, must never write into each other's file.
 func TestTwoInstancesKeepSeparateClouds(t *testing.T) {

@@ -30,7 +30,15 @@ func definitions() []*schema.ResourceDefinition {
 				// A default is a datum, not a function: a schema has to survive a pipe.
 				"size":     {Kind: value.KindInt, Description: "Storage in GB", Default: int64(10)},
 				"password": {Kind: value.KindString, Sensitive: true, Description: "Administrator password"},
-				"network":  {Kind: value.KindString, Description: "Network this database sits in"},
+				// network holds a fake.network's identifier, so it says so: the declaration is
+				// what lets configuration write `network: ${network}` and have infrena fill in
+				// `.id`, and what makes `network: ${db.endpoint}` a compile error. The plugin
+				// decides which attribute a reference means; infrena never guesses one.
+				"network": {
+					Kind:        value.KindString,
+					Description: "Network this database sits in",
+					References:  &schema.Reference{Type: "fake.network", Attribute: "id"},
+				},
 				// A composite attribute is deliberately present: without one,
 				// nothing exercises the conversion between a typed Value and
 				// the plain JSON the hand-editable cloud file must hold.

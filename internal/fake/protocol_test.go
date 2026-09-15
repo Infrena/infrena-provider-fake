@@ -9,6 +9,7 @@ import (
 	"github.com/infrena/infrena/pkg/plugintest"
 	"github.com/infrena/infrena/pkg/provider"
 	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/schema"
 	"github.com/infrena/infrena/pkg/value"
 )
 
@@ -45,6 +46,40 @@ func TestSchemasLoadThroughTheHost(t *testing.T) {
 		}
 	}
 	if !db {
+		t.Fatal("fake.database did not arrive")
+	}
+}
+
+// TestADeclaredReferenceCrossesTheProtocol. References is protocol 3 (infrena PLAN.md §14.3): the
+// schema payload gained a key that an attribute decodes leniently, so a References lost on the wire
+// would not fail anything here. It would only make `network: ${network}` a "declares no reference"
+// compile error for a user. So assert the declaration as the host received it, not as the plugin
+// built it.
+//
+// ValidateAll runs on what arrived because Open does not run it: pluginhost checks each definition
+// alone, and the whole-set check (a References naming a type or attribute nobody serves) runs in
+// infrena's registry, when the CLI registers the plugin.
+func TestADeclaredReferenceCrossesTheProtocol(t *testing.T) {
+	host, _ := openHost(t)
+	defs := host.Definitions()
+	if err := schema.ValidateAll(defs); err != nil {
+		t.Fatalf("the schemas the host received do not load as a set: %v", err)
+	}
+	var found bool
+	for _, d := range defs {
+		if d.Type != "fake.database" {
+			continue
+		}
+		a, _ := d.Attribute("network")
+		if a.References == nil {
+			t.Fatal("fake.database's network arrived with no References: it was dropped on the wire")
+		}
+		if want := (schema.Reference{Type: "fake.network", Attribute: "id"}); *a.References != want {
+			t.Errorf("network References after the wire = %+v, want %+v", *a.References, want)
+		}
+		found = true
+	}
+	if !found {
 		t.Fatal("fake.database did not arrive")
 	}
 }
