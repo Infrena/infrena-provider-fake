@@ -77,7 +77,7 @@ replace github.com/infrena/infrena => ../infrena
 ```
 
 v0.4.0 is the oldest release a require can name: it is the first under the Infrena name, and v0.3.0
-and earlier were published as `github.com/infrata/infrata`. v0.5.0 is the first whose configuration
+and earlier were published under the project's former module path. v0.5.0 is the first whose configuration
 grammar writes a variable as `${var.x}`, the syntax these documents use. v0.6.0 added `References`
 and `Fields` on an attribute, and protocol 3. v0.7.0 added `SystemOwned` on a discovered resource,
 and protocol 4.
@@ -456,7 +456,7 @@ that does not exist.
 - Report a real version from `Version()`, so a project can pin it (see "Constraints" below).
 - **The protocol version is the compatibility contract, not the Go types you compiled against.** A
   plugin built against an older SDK keeps working for as long as its protocol version is supported.
-  You do not have to rebuild for every infrena release. (v0.3.0, released as infrata, raised the
+  You do not have to rebuild for every infrena release. (v0.3.0, released before the rename, raised the
   protocol to 2, for `Optional` and `Aliases` in schemas; v0.6.0 raised it to 3, for `References`
   and `Fields`; v0.7.0 raised it to 4, for `SystemOwned` on a discovered resource; infrena v0.7.0
   still accepts 3, 2 and 1.)
@@ -476,9 +476,9 @@ infrena: ">= 0.7.0"
 source: https://github.com/example/infrena-plugin-hetzner
 ```
 
-Write `manifest: 2`. It is the format that spells the floor `infrena:`; version 1 spelled it
-`infrata:`, from before the rename, and `pkg/pluginmanifest` refuses either key under the other
-version rather than silently reading no floor.
+Write `manifest: 2`. It is the format that spells the floor `infrena:`; version 1 (`manifest: 1`)
+used the pre-rename key, and `pkg/pluginmanifest` refuses either key under the other version rather
+than silently reading no floor.
 
 `manifest` (checked first, before any other key), `name`, `version`, `protocol` (the protocol
 versions **this release's binary** speaks — for an SDK-built plugin exactly one, the

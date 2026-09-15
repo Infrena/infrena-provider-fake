@@ -11,13 +11,13 @@ plugin, `infrena-plugin-fake`) or from infrena's own tree, with the `path:line` 
 starting `pkg/`, `internal/` or `PLAN.md` are in the infrena repository. All other paths are in this
 one.
 
-**A note on the name.** Infrena was called Infrata until 2026-09-14, when it was renamed over a legal
-name collision. The module path, the CLI, plugin binary names (`infrata-plugin-<name>` became
-`infrena-plugin-<name>`), the `INFRATA_*` environment variables and the manifest's floor key all
-changed. Engine releases up to v0.3.0 were published under the old names, and v0.4.0 will be the
-first under the new one. This repository's plugin releases up to and including v0.2.0 are named
-`infrata-plugin-fake` and pair only with infrata v0.3.0 and earlier. Where this guide cites a
-pre-rename engine release or quotes its output, it keeps the name that release actually had.
+**A note on the name.** Infrena took its current name on 2026-09-14, when it was renamed over a legal
+name collision. The module path, the CLI, plugin binary names (now `infrena-plugin-<name>`), the
+environment variables (now `INFRENA_*`) and the manifest's floor key all changed. Engine releases up
+to v0.3.0 were published under the project's former names, and v0.4.0 was the first under the new
+one. This repository's plugin releases up to and including v0.2.0 predate the rename, use the
+project's former binary and module names, and pair only with engine releases up to v0.3.0. Where this
+guide cites a pre-rename engine release or quotes its output, it names that release by version.
 
 **A note on syntax.** Configuration examples use infrena v0.5.0's grammar: a variable is written
 `${var.x}`, and a bare first segment always names a resource, as in `${vpc.id}`. Projects written for
@@ -1346,7 +1346,7 @@ replace github.com/infrena/infrena => ../infrena
 ```
 
 **v0.4.0 is the oldest release you can require.** Tags `v0.1.0` to `v0.3.0` were cut before the
-rename and declare the old module path, `github.com/infrata/infrata`, so none of them satisfies a
+rename and declare the project's former module path, so none of them satisfies a
 require on `github.com/infrena/infrena`.
 
 `../infrena` is the directory `git clone` of infrena creates, so a fresh clone of both repositories
@@ -1455,7 +1455,7 @@ works with (`PLAN.md` §31.2). This repository's:
 # plugin.yaml
 # plugin.yaml: what this plugin is, and what it works with. infrena PLAN.md §31.2.
 # Read at a release TAG, never at the default branch, which describes unreleased code.
-# manifest: 2 since the Infrata -> Infrena rename, which renamed the floor key `infrata:` to
+# manifest: 2 since the rename to Infrena, which replaced the pre-rename floor key with
 # `infrena:`. Releases up to v0.2.0 were tagged with `manifest: 1` and stay readable as they are.
 manifest: 2
 name: fake
@@ -1471,8 +1471,8 @@ description: A fake provider for testing infrena without a cloud account.
 # floor is the release CI builds and runs the e2e suite with. 0.7.0 raised the plugin protocol to 4,
 # which is what this binary speaks, so an older host refuses it at the handshake; 0.6.0 added
 # provider-declared references (fake.database's network accepts ${network}); 0.5.0 changed the
-# configuration grammar (a variable is ${var.x}). Releases before 0.4.0 are infrata, with a
-# different module path, CLI and plugin binary name.
+# configuration grammar (a variable is ${var.x}). Releases before 0.4.0 predate the rename,
+# with the project's former module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
 infrena: ">= 0.7.0"
@@ -1480,8 +1480,8 @@ source: https://github.com/infrena/infrena-provider-fake
 ```
 
 **Write `manifest: 2`.** Format version 2 exists because of the rename: it spells the floor key
-`infrena:` where version 1 spelled it `infrata:`. That is a renamed key, not an added one, so the
-format version moved. `pkg/pluginmanifest` refuses `infrata:` in a version 2 manifest and `infrena:`
+`infrena:` where version 1 used the pre-rename key. That is a renamed key, not an added one, so the
+format version moved. `pkg/pluginmanifest` refuses the pre-rename key in a version 2 manifest and `infrena:`
 in a version 1 one, each with a message naming the mistake (`checkFloorSpelling`,
 `pkg/pluginmanifest/manifest.go:161`). The alternative is worse: an unrecognised floor would read as
 absent, and absent means unconstrained. A release tagged with `manifest: 1` keeps being read as
@@ -1537,7 +1537,7 @@ Three consequences follow:
    release keeps loading and keeps describing itself correctly.
 3. **Your next release changes `protocol` in the same commit as its infrena `require` bump**, because
    the rebuilt binary announces the new number. This repository went to `protocol: [2]` in the commit
-   that moved `go.mod` to `github.com/infrata/infrata v0.3.0`, as the module was named then, and to
+   that moved `go.mod` to v0.3.0 under the project's former module path, and to
    `protocol: [3]` in the commit that required `github.com/infrena/infrena v0.6.0`, and to
    `protocol: [4]` in the commit that required `v0.7.0`.
 
@@ -1586,7 +1586,7 @@ your own release gate makes of it.
 `pkg/pluginmanifest/manifest.go`). Now that infrena has tags, a plain `go build` of an infrena checkout
 isn't one. Go stamps the version from git: a clean checkout at `v0.2.0` reports `0.2.0`, and one commit
 past it reports `0.2.1-0.<time>-<hash>`, which compares as `0.2.1`. Measured 2026-09-13; a checkout at
-`v0.3.0` likewise reported `infrata 0.3.0 (45deb30, …)` (2026-09-14, before the rename), and infrena
+`v0.3.0` likewise reported version `0.3.0 (45deb30, …)` under the former CLI name (2026-09-14, before the rename), and infrena
 `main` just after the rename, before `v0.4.0` was tagged on that same commit, reported
 `infrena 0.3.1-0.20260914150359-e2be8bf36135 (e2be8bf, …)`, which compares as `0.3.1`. Once tagged, the
 same checkout reports `infrena 0.4.0 (e2be8bf, …)`.

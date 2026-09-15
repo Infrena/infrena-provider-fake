@@ -14,8 +14,8 @@ require gopkg.in/yaml.v3 v3.0.1 // indirect
 // those References (fake.database's network declares one) and protocol 3; v0.6.1 made its host
 // adapter check references on every load. v0.5.0 changed the configuration grammar to write a
 // variable as ${var.x}, which every example in this repository uses. v0.4.0 is the oldest release a require on this path can
-// name: Infrata was renamed Infrena on 2026-09-14, and tags v0.1.0 to v0.3.0 declare the old path,
-// github.com/infrata/infrata.
+// name: the project was renamed Infrena on 2026-09-14, and tags v0.1.0 to v0.3.0 declare its
+// former module path.
 //
 // It is also the release CI verifies: scripts/ci-use-infrena-tag drops the replace below, so CI
 // compiles the tagged module fetched from github.com/infrena/infrena, checked against the hashes

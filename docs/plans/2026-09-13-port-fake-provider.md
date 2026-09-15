@@ -1,17 +1,17 @@
-# Port the fake provider to `infrata-plugin-fake` — Implementation Plan
+# Port the fake provider to `infrena-plugin-fake` — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Port infrata's in-tree `providers/test` into this repository as the standalone plugin
-binary `infrata-plugin-fake`, serving `fake.*`, with the README, AGENT.md and
+**Goal:** Port infrena's in-tree `providers/test` into this repository as the standalone plugin
+binary `infrena-plugin-fake`, serving `fake.*`, with the README, AGENT.md and
 `docs/writing-a-provider.md` that make it the reference for plugin authors.
 
-**Architecture:** One Go module. `cmd/infrata-plugin-fake` is a one-line `pluginsdk.Main`. All logic
+**Architecture:** One Go module. `cmd/infrena-plugin-fake` is a one-line `pluginsdk.Main`. All logic
 lives in `internal/fake`, split by responsibility: schemas, the cloud file, the plugin (configuration),
-the provider (operations). Unit tests call `Provider` directly; protocol tests go through infrata's
-public `pkg/plugintest`; a compliance suite behind `-tags e2e` drives a real `infrata` binary.
+the provider (operations). Unit tests call `Provider` directly; protocol tests go through infrena's
+public `pkg/plugintest`; a compliance suite behind `-tags e2e` drives a real `infrena` binary.
 
-**Tech Stack:** Go 1.27.0, standard library, `github.com/infrata/infrata` (via `replace => ../ilan`).
+**Tech Stack:** Go 1.27.0, standard library, `github.com/infrena/infrena` (via `replace => ../ilan`).
 
 **Spec:** this document. The design was approved in session on 2026-09-13; its decisions and the
 verification behind them are recorded below rather than in a separate spec, because `CLAUDE.md`
@@ -19,11 +19,11 @@ requires the plan to carry both.
 
 ## Global Constraints
 
-- Go `1.27.0`, following infrata's own `go.mod` floor as of 2026-09-13 (R7; supersedes the
-  `1.24.13` this section originally named). Standard library plus `github.com/infrata/infrata` only
+- Go `1.27.0`, following infrena's own `go.mod` floor as of 2026-09-13 (R7; supersedes the
+  `1.24.13` this section originally named). Standard library plus `github.com/infrena/infrena` only
   — no other `require`.
-- `go.mod` carries `replace github.com/infrata/infrata => ../ilan` (infrata is not fetchable).
-- Plugin name `fake`; binary `infrata-plugin-fake`; every type prefixed `fake.`.
+- `go.mod` carries `replace github.com/infrena/infrena => ../ilan` (infrena is not fetchable).
+- Plugin name `fake`; binary `infrena-plugin-fake`; every type prefixed `fake.`.
 - Nothing ever writes to stdout. Logs, if any, go to stderr.
 - `Create`/`Update` never return `(nil, nil)`.
 - Do not reimplement host rules: no carry-forward, no timestamp stamping, no `WithSensitive`,
@@ -32,7 +32,7 @@ requires the plan to carry both.
   behaviour, recorded in the task's commit message.
 - Stage explicit paths only. Never `git add -A`, `git add .`, `git commit -am`.
 - Commit messages explain why, and end with the session's `Co-Authored-By`/`Claude-Session` lines.
-- infrata (`../ilan`) is NOT modified by this plan. New infrata defects go to the vault note's
+- infrena (`../ilan`) is NOT modified by this plan. New infrena defects go to the vault note's
   follow-ups (`projects/labs/infra-tool.md`).
 
 ---
@@ -41,15 +41,15 @@ requires the plan to carry both.
 
 | # | Decision | Why | Cost |
 | --- | --- | --- | --- |
-| D1 | Name the plugin `fake`, serving `fake.*` | This repository is what plugin authors copy; its lesson is that repo suffix, binary name, `Name()` and type prefix are one word. `test` also reads as "a test helper". | Breaking rename for existing `test.*` projects and state. Infrata's builtin `test` keeps serving them until it is deleted (infrata follow-up). No migration here. |
+| D1 | Name the plugin `fake`, serving `fake.*` | This repository is what plugin authors copy; its lesson is that repo suffix, binary name, `Name()` and type prefix are one word. `test` also reads as "a test helper". | Breaking rename for existing `test.*` projects and state. Infrena's builtin `test` keeps serving them until it is deleted (infrena follow-up). No migration here. |
 | D2 | The implicit instance (`fake` or `""`) keeps `.infra/fake-cloud.json` | The implicit instance is named after the plugin. `providers/test` special-cased `test`; without an equivalent for `fake` the implicit instance would open `fake-cloud-fake.json`, an empty cloud, and the first plan would propose recreating everything. | One special case, pinned by a test. |
 | D3 | Port, delete, or change each behaviour per the ledger below | `internal/pluginhost/adapter.go` now enforces carry-forward, sensitivity, provenance, undeclared-attribute refusal and nil-from-create; `trust_test.go` covers each. A plugin duplicating them passes its tests when the host is broken. | Four existing unit tests are not ported (they assert deleted behaviour). |
 | D4 | Fix `Update` to delete non-computed attributes the desired state omits | Reproduced against the builtin: remove `tags:`, plan shows `tags -> (absent)`, apply "succeeds", the cloud keeps `tags`, and every later plan repeats the update. Desired state never carries computed attributes, so a replace-all would drop `endpoint`; computed ones are kept. | A behaviour change from `providers/test`, approved in session. |
 | D5 | One lock per absolute cloud path, not per `Provider` value | One process now serves every configured instance. Two instances naming the same `cloud:` file would each hold their own mutex and lose each other's writes. | A package-level `sync.Map`. Symlinked paths to one file are not unified (documented). |
-| D6 | Protocol tests use `pkg/plugintest` in `go test ./...`; the real-binary suite is `-tags e2e` | `plugintest` runs infrata's own host over an in-memory pipe, so trust rules apply with no process. The e2e suite is slower and needs `../ilan` built; the user wants it run occasionally for compliance, not on every run. | e2e skips (loudly) when the infrata source is absent. |
-| D7 | Committed `replace => ../ilan` | `go list -m github.com/infrata/infrata` fails (private). Spike: builds offline, zero `go.sum` lines, pulls only `pkg/*`. | Needs a sibling checkout named `ilan`; documented in README. |
-| D8 | Bottom-up task order: cloud → provider → discover/import → injection → plugin+binary → e2e → docs | Each layer is testable on its own the moment it exists. `CLAUDE.md`'s suggested order starts with the binary, but `main` needs a `Plugin` whose `New` returns a working `Provider`, so schemas-first would ship a stub. `infrata explain` is verified in Task 5 instead. | The binary appears at Task 5, not Task 1. |
-| D10 | Ship `plugin.yaml` (infrata `PLAN.md` §31.2) plus a release gate that refuses a tag/manifest/binary disagreement | User direction, 2026-09-13: infrata's install flow reads a manifest at the release tag before downloading a binary, and a plugin author needs one worked example. `internal/fake.Version` defaults to `"0.0.0-dev"`, stamped only by `-ldflags` at release, so an unstamped build cannot silently pass. | A `pkg/semver`-shaped `infrata:` constraint and `platforms` list to keep true; validating `plugin.yaml` itself (Task 12) waits on infrata publishing `pkg/pluginmanifest`. |
+| D6 | Protocol tests use `pkg/plugintest` in `go test ./...`; the real-binary suite is `-tags e2e` | `plugintest` runs infrena's own host over an in-memory pipe, so trust rules apply with no process. The e2e suite is slower and needs `../ilan` built; the user wants it run occasionally for compliance, not on every run. | e2e skips (loudly) when the infrena source is absent. |
+| D7 | Committed `replace => ../ilan` | `go list -m github.com/infrena/infrena` fails (private). Spike: builds offline, zero `go.sum` lines, pulls only `pkg/*`. | Needs a sibling checkout named `ilan`; documented in README. |
+| D8 | Bottom-up task order: cloud → provider → discover/import → injection → plugin+binary → e2e → docs | Each layer is testable on its own the moment it exists. `CLAUDE.md`'s suggested order starts with the binary, but `main` needs a `Plugin` whose `New` returns a working `Provider`, so schemas-first would ship a stub. `infrena explain` is verified in Task 5 instead. | The binary appears at Task 5, not Task 1. |
+| D10 | Ship `plugin.yaml` (infrena `PLAN.md` §31.2) plus a release gate that refuses a tag/manifest/binary disagreement | User direction, 2026-09-13: infrena's install flow reads a manifest at the release tag before downloading a binary, and a plugin author needs one worked example. `internal/fake.Version` defaults to `"0.0.0-dev"`, stamped only by `-ldflags` at release, so an unstamped build cannot silently pass. | A `pkg/semver`-shaped `infrena:` constraint and `platforms` list to keep true; validating `plugin.yaml` itself (Task 12) waits on infrena publishing `pkg/pluginmanifest`. |
 
 ### Rulings recorded during execution (R8–R19)
 
@@ -60,17 +60,17 @@ they correct (Global Constraints, Task 1 Step 6, Task 4 Steps 1 and 5).
 | # | Ruling | Why | Cost |
 | --- | --- | --- | --- |
 | R8 | Commit Task 6's two e2e fixtures before Task 7, separately from the (still in-progress) e2e suite | README.md quotes the `basic` fixture and `readme_test.go` reads it from disk; a README commit that depends on an untracked file fails in a clean checkout. | If Task 6 later changes a fixture, the README quote changes with it. |
-| R9 | `internal/fake.Version` defaults to `"0.0.0-dev"`, stamped only by release `-ldflags`, mirroring infrata's own §61.1 convention | A default equal to `plugin.yaml`'s version (`0.1.0`) would let an unstamped binary pass the tag/manifest/binary release gate, so a broken `-ldflags` path could never be caught. Verified the handshake is readable with just the host cookie and empty stdin. | An unstamped build cannot satisfy a project's `plugins: {fake: …}` version constraint (the host names it; intended). |
-| R10 | Archive the linux/arm build as `infrata-plugin-fake_<v>_linux_arm.tar.gz`, following §31.2's constructible `<goos>_<goarch>` convention rather than infrata's own `armv7` archive spelling | Consistency with this repo's manifest-driven naming. | One archive name to change if infrata's install ever adds a GOARM suffix. |
+| R9 | `internal/fake.Version` defaults to `"0.0.0-dev"`, stamped only by release `-ldflags`, mirroring infrena's own §61.1 convention | A default equal to `plugin.yaml`'s version (`0.1.0`) would let an unstamped binary pass the tag/manifest/binary release gate, so a broken `-ldflags` path could never be caught. Verified the handshake is readable with just the host cookie and empty stdin. | An unstamped build cannot satisfy a project's `plugins: {fake: …}` version constraint (the host names it; intended). |
+| R10 | Archive the linux/arm build as `infrena-plugin-fake_<v>_linux_arm.tar.gz`, following §31.2's constructible `<goos>_<goarch>` convention rather than infrena's own `armv7` archive spelling | Consistency with this repo's manifest-driven naming. | One archive name to change if infrena's install ever adds a GOARM suffix. |
 | R11 | Run Task 11 (manifest + release gate) before Tasks 8 and 9; extend Task 8/9's plan text with the manifest, release gate, `0.0.0-dev` default, `plugins:`/`pkg/semver` and Go-floor facts before briefing them | Docs committed before the files they describe exist would describe a repository that does not contain them. | None; Task 11 depends on nothing in 8 or 9. |
-| R12 | Resume Task 6's implementer (blocked on an infrata discovery defect) as soon as the upstream fix landed, ahead of finishing Task 11 | User-approved return to Task 6 once unblocked; only one implementer commits at a time, and Task 7's implementer was already done (only its reviewer still live). | A Task 6 sabotage briefly edits `internal/fake` while Task 7's reviewer reads `internal/fake/definitions.go`; no Task 6 sabotage touches that file, so no conflict. |
-| R13 | Keep README.md's two sentences pointing at `infrata discover`/`infrata import` for hand-added resources, despite an earlier scope ruling capping that mention at one sentence | The cap existed only because discovery was broken; infrata `de33b4d` fixed it (verified), and Task 7b later adds the full worked example. | One sentence naming two commands ahead of their examples landing in Task 7b. |
-| R14 | Accept that Task 6's sabotage 4 (drop `Import`'s type check) does not fail the e2e import subtest | infrata's host forces the requested type and refuses attributes that type does not declare, so the import fails through the real host regardless of the plugin's own check; the fake's check stays covered at the unit level (`TestImportOfTheWrongTypeIsRefused`, sabotage-verified in Task 3). | None; the e2e layer simply cannot observe that particular check. |
+| R12 | Resume Task 6's implementer (blocked on an infrena discovery defect) as soon as the upstream fix landed, ahead of finishing Task 11 | User-approved return to Task 6 once unblocked; only one implementer commits at a time, and Task 7's implementer was already done (only its reviewer still live). | A Task 6 sabotage briefly edits `internal/fake` while Task 7's reviewer reads `internal/fake/definitions.go`; no Task 6 sabotage touches that file, so no conflict. |
+| R13 | Keep README.md's two sentences pointing at `infrena discover`/`infrena import` for hand-added resources, despite an earlier scope ruling capping that mention at one sentence | The cap existed only because discovery was broken; infrena `de33b4d` fixed it (verified), and Task 7b later adds the full worked example. | One sentence naming two commands ahead of their examples landing in Task 7b. |
+| R14 | Accept that Task 6's sabotage 4 (drop `Import`'s type check) does not fail the e2e import subtest | infrena's host forces the requested type and refuses attributes that type does not declare, so the import fails through the real host regardless of the plugin's own check; the fake's check stays covered at the unit level (`TestImportOfTheWrongTypeIsRefused`, sabotage-verified in Task 3). | None; the e2e layer simply cannot observe that particular check. |
 | R15 | Queue Task 11's fix round until Task 8's implementer reported, rather than running both at once | Two implementers committing at once risk the git index lock even with disjoint files. | A few minutes' delay. |
 | R16 | Correct AGENT.md, this plan (Task 8 item 8) and `CLAUDE.md`'s claim that Go's too-low-`go`-directive error "does not name the dependency" | Task 8's reviewer reproduced the real message directly: it names the module (`go: <module>@<version> requires go >= X …`). | None; the reproduction is direct. Task 9 item 11 was checked and never carried this claim — no edit needed there. |
 | R17 | Fold README.md's retryability-paragraph correction into Task 7b rather than a separate task | The paragraph as written said only `update` is retried when conditional, contradicting the guide's per-operation table and AGENT.md; Task 7b was already touching that section next. | The README stayed wrong for the short interval until Task 7b ran. |
 | R18 | Treat Task 9's Important-2 finding (the same README retry contradiction) as already covered by R17/Task 7b, rather than a second fix | One correction, one place to make it; Task 7b was directed to treat the guide, not AGENT.md §5, as authoritative for retries. | None; Task 7b's review checked it. |
-| R19 | Task 10 does not edit the Obsidian vault; the controller performs the vault close-out after Task 10 reports "vault-worthy facts" | The infrata session edits `labs/infra-tool.md` concurrently; a second, uncoordinated editor risks a lost update. | None; Task 10 lists what the vault should record instead of writing it. |
+| R19 | Task 10 does not edit the Obsidian vault; the controller performs the vault close-out after Task 10 reports "vault-worthy facts" | The infrena session edits `labs/infra-tool.md` concurrently; a second, uncoordinated editor risks a lost update. | None; Task 10 lists what the vault should record instead of writing it. |
 
 ## Behaviour ledger (`providers/test` → `internal/fake`)
 
@@ -107,7 +107,7 @@ Every factual claim above was checked by reading code or running the CLI on 2026
 | Implicit instance is named after the plugin | `internal/providers/prepare.go:152-167` | True — hence D2 |
 | State-only commands pick the plugin from the type prefix | `internal/cli/context.go:236` | True — hence D1's cost |
 | A binary on the search path beats the builtin | `internal/pluginhost/loader.go:89-103` | True |
-| `github.com/infrata/infrata` is fetchable | `go list -m -versions` | **False** — hence D7 |
+| `github.com/infrena/infrena` is fetchable | `go list -m -versions` | **False** — hence D7 |
 | `replace` build is offline and stdlib-only | spike module importing `pluginsdk` | True: 0 `go.sum` lines; deps are `pkg/{address,pluginproto,pluginsdk,provider,resource,schema,value}` |
 | `plan` exit code | CLI run | **2 with changes, 0 clean** |
 | `apply` / `destroy` exit code on success | CLI run | **2**, not 0 (assumed 0 — wrong) |
@@ -118,25 +118,25 @@ Every factual claim above was checked by reading code or running the CLI on 2026
 | `import <env> <type>.<id> --generate` | CLI run | True: writes `discovered/<plural>.yml` |
 | `providers:` syntax | `internal/config/providers_test.go:84-145` | `- plugin: fake` / `name:` / `default: true`; resources select with `provider: <name>` |
 | `Update` removes an omitted attribute | CLI run against builtin | **False** — permanent drift loop; hence D4 |
-| `explain` works with no `infra.yml` | `infrata --chdir <empty dir> explain test.network` | True, exit 0 (builtin; plugin-dir loading by prefix checked in Task 5) |
+| `explain` works with no `infra.yml` | `infrena --chdir <empty dir> explain test.network` | True, exit 0 (builtin; plugin-dir loading by prefix checked in Task 5) |
 | `pkg/plugintest` is importable from another module | Its own test cannot prove it — Go's `internal/` rule is per module (`ilan` `b7f0de6` message) | **Unproven until Task 5** — `protocol_test.go` compiling here is the check |
 | The engine's in-tree `providers/test` has 36 tests | `grep '^func Test'` | True; 32 port (some moved between files), 4 are deleted (D3) |
-| `explain` loads a plugin from its type prefix alone via `--plugin-dir`, no `infra.yml`/`providers:` | `infrata --chdir <empty dir> --plugin-dir ./bin explain fake.database` | True, exit 0 (task-5-report.md Step 6) |
-| `plan --output` lists every planned resource, including no-op ones | infrata `de33b4d` (commit message) | True — `kind: "noop"` appears for an unchanged resource; Task 6's `planOps` filters it out for its own assertions |
+| `explain` loads a plugin from its type prefix alone via `--plugin-dir`, no `infra.yml`/`providers:` | `infrena --chdir <empty dir> --plugin-dir ./bin explain fake.database` | True, exit 0 (task-5-report.md Step 6) |
+| `plan --output` lists every planned resource, including no-op ones | infrena `de33b4d` (commit message) | True — `kind: "noop"` appears for an unchanged resource; Task 6's `planOps` filters it out for its own assertions |
 | The discovery registry silently dropped a project with no `providers:` block once a second plugin (`fake`) existed alongside the builtin `test` | `ilan` `internal/cli/context.go:357` (`discoveryRegistry` calls `EnsurePlugins` over every `loader.Available()`, builtins included) and `:372-376` (falls back to `providers.Implicit`, whose own comment claims "one per plugin"); `internal/providers/prepare.go:240` (`Implicit` returns `nil` when more than one factory is registered) | Confirmed defect (root-caused by the controller against `ilan` `fd944ef`); fixed upstream in `de33b4d` ("discover: ask every plugin, not none when there is more than one"), which replaces the `Implicit` call with `providers.EveryPlugin`; `e2e_test.go`'s discover/import subtests pass against it (Task 6, commit `efa5c54`) |
-| infrata's `infrata:` manifest-floor constraint is enforced for release builds and exempts development builds | `ilan` `internal/compiler/compile.go:252-270` (`checkRequiredVersion`) | True: enforced only for a release-stamped version; `"0.0.0-dev"`, `""`, `0.0.0` and an unparseable version are deliberately exempted — a checkout build accepting an `infrata: ">= 99.0"` constraint is by design, not a bug. Consequence: this repo's e2e suite (checkout-built infrata) cannot exercise that constraint; only a release build can |
-| A project's `plugins:` version constraint is enforced against the plugin's handshake version | `ilan` `internal/pluginhost/loader.go:139-160` | True; an unversioned plugin reports `0.0.0` and cannot satisfy any constraint above it — the asymmetry with the `infrata:` exemption above is intentional and documented there |
+| infrena's `infrena:` manifest-floor constraint is enforced for release builds and exempts development builds | `ilan` `internal/compiler/compile.go:252-270` (`checkRequiredVersion`) | True: enforced only for a release-stamped version; `"0.0.0-dev"`, `""`, `0.0.0` and an unparseable version are deliberately exempted — a checkout build accepting an `infrena: ">= 99.0"` constraint is by design, not a bug. Consequence: this repo's e2e suite (checkout-built infrena) cannot exercise that constraint; only a release build can |
+| A project's `plugins:` version constraint is enforced against the plugin's handshake version | `ilan` `internal/pluginhost/loader.go:139-160` | True; an unversioned plugin reports `0.0.0` and cannot satisfy any constraint above it — the asymmetry with the `infrena:` exemption above is intentional and documented there |
 | The plugin handshake is readable with just the host cookie and empty stdin | manual run of `internal/fake/plugin.go`'s built binary | True, exit 0 — supports Ruling R9's choice to default `Version` to `"0.0.0-dev"` rather than the manifest's version, so an unstamped `-ldflags` path is still visibly unstamped |
-| `pluginsdk`'s hand-run message (printed when the plugin binary is launched directly, without the host cookie) | manual run | Has a second line beyond the refusal, pointing the runner at where infrata looks for plugins — AGENT.md and the guide should not assume it is one line |
-| Go's error for a `go` directive lower than a dependency's floor names the offending module | Task 8 reviewer's reproduction (`replace` and `GOPROXY` variants) | **Contradicted this plan's own Task 8 item 8 and this repo's `CLAUDE.md` (added by the infrata session in `5ce4f13`)**, both of which said the error "does not name the dependency" — false. The real message: `go: <module>@<version> requires go >= X (running go Y; …)`. With `GOTOOLCHAIN=auto` (this repo's default), Go instead fetches a newer toolchain silently; the named-module error only surfaces under a pinned `GOTOOLCHAIN=local` on a too-old toolchain (R16; fixed in AGENT.md by commit `cbeac6a`, in this plan and `CLAUDE.md` by Task 10) |
+| `pluginsdk`'s hand-run message (printed when the plugin binary is launched directly, without the host cookie) | manual run | Has a second line beyond the refusal, pointing the runner at where infrena looks for plugins — AGENT.md and the guide should not assume it is one line |
+| Go's error for a `go` directive lower than a dependency's floor names the offending module | Task 8 reviewer's reproduction (`replace` and `GOPROXY` variants) | **Contradicted this plan's own Task 8 item 8 and this repo's `CLAUDE.md` (added by the infrena session in `5ce4f13`)**, both of which said the error "does not name the dependency" — false. The real message: `go: <module>@<version> requires go >= X (running go Y; …)`. With `GOTOOLCHAIN=auto` (this repo's default), Go instead fetches a newer toolchain silently; the named-module error only surfaces under a pinned `GOTOOLCHAIN=local` on a too-old toolchain (R16; fixed in AGENT.md by commit `cbeac6a`, in this plan and `CLAUDE.md` by Task 10) |
 
 ## File structure
 
 | Path | Responsibility |
 | --- | --- |
-| `go.mod` | module `github.com/infrata/infrata-provider-fake`, the `replace` |
-| `.gitignore` | `/infrata-plugin-fake`, `/bin/` |
-| `cmd/infrata-plugin-fake/main.go` | `pluginsdk.Main(fake.NewPlugin())`; `version` set by `-ldflags` |
+| `go.mod` | module `github.com/infrena/infrena-provider-fake`, the `replace` |
+| `.gitignore` | `/infrena-plugin-fake`, `/bin/` |
+| `cmd/infrena-plugin-fake/main.go` | `pluginsdk.Main(fake.NewPlugin())`; `version` set by `-ldflags` |
 | `internal/fake/cloud.go` | the cloud file: types, load, atomic save, failure rules, IDs |
 | `internal/fake/definitions.go` | the three `fake.*` schemas |
 | `internal/fake/provider.go` | `Provider`: CRUD, discover, import, classify, injection, locking |
@@ -171,22 +171,22 @@ Every factual claim above was checked by reading code or running the CLI on 2026
 `go.mod`:
 
 ```
-module github.com/infrata/infrata-provider-fake
+module github.com/infrena/infrena-provider-fake
 
 go 1.24.13
 
-require github.com/infrata/infrata v0.0.0
+require github.com/infrena/infrena v0.0.0
 
-// infrata is not yet published as a fetchable module, so this plugin builds against a
+// infrena is not yet published as a fetchable module, so this plugin builds against a
 // sibling checkout at ../ilan. An outside plugin author has the same constraint today.
-// Delete this line, and pin a real version above, once infrata is published.
-replace github.com/infrata/infrata => ../ilan
+// Delete this line, and pin a real version above, once infrena is published.
+replace github.com/infrena/infrena => ../ilan
 ```
 
 `.gitignore`:
 
 ```
-/infrata-plugin-fake
+/infrena-plugin-fake
 /bin/
 ```
 
@@ -243,13 +243,13 @@ cp ../ilan/providers/test/cloud.go internal/fake/cloud.go
 Edit exactly:
 1. Package doc and clause become:
    ```go
-   // Package fake implements infrata's fake provider: a provider whose "cloud" is a
+   // Package fake implements infrena's fake provider: a provider whose "cloud" is a
    // hand-editable JSON file, so drift can be induced by a person or a test with equal ease.
    package fake
    ```
 2. Delete the `// Spec §10's refresh reads every resource concurrently.` sentence from `Save`'s
    comment and replace `mirroring internal/state/local.go's Put` with `the same discipline
-   infrata's own state file uses` — this repository must not point readers at infrata internals
+   infrena's own state file uses` — this repository must not point readers at infrena internals
    as if they could use them.
 3. Nothing else changes: the types, `LoadCloud`, `Save`, `ShouldFail`, `Delay` and `AllocateID`
    port verbatim.
@@ -257,7 +257,7 @@ Edit exactly:
 - [ ] **Step 5: Run to verify pass**
 
 Run: `go mod tidy && go vet ./... && gofmt -l . && go test -count=1 ./internal/fake/`
-Expected: `ok`; `gofmt -l` prints nothing; `go.mod` gains no `require` other than infrata.
+Expected: `ok`; `gofmt -l` prints nothing; `go.mod` gains no `require` other than infrena.
 
 - [ ] **Step 6: Sabotage**
 
@@ -474,8 +474,8 @@ package fake
 import (
 	"fmt"
 
-	"github.com/infrata/infrata/pkg/resource"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/value"
 )
 
 // stateOf converts a cloud object into what a plugin reports: its type, its ID and its
@@ -511,9 +511,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/resource"
-	"github.com/infrata/infrata/pkg/schema"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/schema"
 )
 
 // PluginName is this plugin's name: the binary's suffix, what `plugin:` names, and the
@@ -720,7 +720,7 @@ One at a time; confirm the named test fails; revert:
 git add internal/fake/definitions.go internal/fake/definitions_test.go internal/fake/values.go internal/fake/provider.go internal/fake/provider_test.go
 git commit -m "fake: schemas and CRUD, without the host's jobs, and an update that removes
 
-Carry-forward, timestamps, schema sensitivity and provenance are enforced by infrata's
+Carry-forward, timestamps, schema sensitivity and provenance are enforced by infrena's
 host adapter now; doing them here too would hide a broken host. Update now deletes
 attributes the configuration dropped (keeping computed ones): the old merge left them in
 the cloud and every later plan proposed the same removal forever.
@@ -755,7 +755,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/infrata/infrata/pkg/provider"
+	"github.com/infrena/infrena/pkg/provider"
 )
 ```
 
@@ -812,7 +812,7 @@ func (p *Provider) Discover(ctx context.Context, req provider.DiscoverRequest) (
 // The type is CHECKED against what the cloud holds, not trusted: `import fake.network db-9`
 // naming a real database would otherwise write state claiming a database is a network, and
 // the next plan would propose replacing real infrastructure to settle a disagreement the tool
-// invented. No address is assigned — naming is infrata's job.
+// invented. No address is assigned — naming is infrena's job.
 func (p *Provider) Import(ctx context.Context, resourceType, id string) (*resource.ResourceState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -850,7 +850,7 @@ Expected: `ok`.
 git add internal/fake/provider.go internal/fake/discover_test.go
 git commit -m "fake: discover and import
 
-Discovery reports resources nobody created through infrata, because that is the case it
+Discovery reports resources nobody created through infrena, because that is the case it
 exists for; import checks the type instead of trusting it, because trusting it lets a plan
 propose replacing a real resource to fix a mismatch the tool invented.
 Sabotage-verified: sort, type filter, import type check, ID in error." -- internal/fake/provider.go internal/fake/discover_test.go
@@ -869,7 +869,7 @@ Sabotage-verified: sort, type filter, import type check, ID in error." -- intern
 - Consumes: Tasks 1–3.
 - Produces: `type ErrInjected struct { Message string; Retryability Retryability }` with `Error() string`;
   `func (p *Provider) delay(ctx context.Context) error`. These are the fake's test surface for
-  infrata's executor, and README (Task 7) documents them.
+  infrena's executor, and README (Task 7) documents them.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -888,10 +888,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infrata/infrata/pkg/address"
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/resource"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/address"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/value"
 )
 ```
 
@@ -1110,7 +1110,7 @@ git add internal/fake/provider.go internal/fake/inject_test.go
 git commit -m "fake: failure and latency injection, and a lock per cloud file
 
 Injected failures carry all three retryability classes, because the fake provider is the
-only thing that can make infrata's executor face each one. Latency is applied outside the
+only thing that can make infrena's executor face each one. Latency is applied outside the
 lock (so concurrency tests stay meaningful) and before the mutation (so a cancellation
 never abandons a create that happened). The lock is per file because one plugin process
 now serves every instance.
@@ -1123,13 +1123,13 @@ Sabotage-verified: persisted counter, classification, lock scope, cancellation, 
 
 **Files:**
 - Create: `internal/fake/plugin.go`, `internal/fake/plugin_test.go`, `internal/fake/protocol_test.go`,
-  `cmd/infrata-plugin-fake/main.go`
+  `cmd/infrena-plugin-fake/main.go`
 
 **Interfaces:**
-- Consumes: Tasks 1–4; `github.com/infrata/infrata/pkg/plugintest` (`Open(ctx, provider.Plugin, dir) (*Host, error)`,
+- Consumes: Tasks 1–4; `github.com/infrena/infrena/pkg/plugintest` (`Open(ctx, provider.Plugin, dir) (*Host, error)`,
   `(*Host).Configure(provider.Config) (provider.Provider, error)`, `Definitions()`, `Version()`, `Close()`).
 - Produces: `type Plugin struct{}`, `func NewPlugin() *Plugin`, `var Version = "0.1.0"`,
-  `func defaultCloudPath(instance string) string`. Binary `infrata-plugin-fake`.
+  `func defaultCloudPath(instance string) string`. Binary `infrena-plugin-fake`.
 
 **D9 (a small fix, approved in session 2026-09-13):** `providers/test` joined `cloud:` onto the project directory
 unconditionally, so `cloud: /tmp/x.json` silently became `<project>/tmp/x.json`. An absolute path is
@@ -1145,7 +1145,7 @@ add the two new tests.
 
 ```go
 // TestTheImplicitInstanceKeepsTheHistoricalPath. A project with no `providers:` block has one
-// implicit instance, named after the PLUGIN (infrata internal/providers/prepare.go). providers/test
+// implicit instance, named after the PLUGIN (infrena internal/providers/prepare.go). providers/test
 // special-cased "test"; renamed to fake, the implicit instance would otherwise open
 // fake-cloud-fake.json — an empty cloud — and the first plan would propose recreating
 // everything the project already has. "" is the same instance before a name is assigned.
@@ -1193,14 +1193,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/infrata/infrata/pkg/address"
-	"github.com/infrata/infrata/pkg/plugintest"
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/resource"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/address"
+	"github.com/infrena/infrena/pkg/plugintest"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/resource"
+	"github.com/infrena/infrena/pkg/value"
 )
 
-// openHost connects this plugin to infrata's own host over an in-memory pipe, so every call
+// openHost connects this plugin to infrena's own host over an in-memory pipe, so every call
 // is encoded, decoded and passed through the trust rules exactly as it is from a subprocess.
 func openHost(t *testing.T) (*plugintest.Host, string) {
 	t.Helper()
@@ -1335,13 +1335,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/infrata/infrata/pkg/provider"
-	"github.com/infrata/infrata/pkg/schema"
-	"github.com/infrata/infrata/pkg/value"
+	"github.com/infrena/infrena/pkg/provider"
+	"github.com/infrena/infrena/pkg/schema"
+	"github.com/infrena/infrena/pkg/value"
 )
 
 // Version is reported in the handshake and checked against a project's `plugins:`
-// constraint. Releases set it: -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=1.2.3".
+// constraint. Releases set it: -ldflags "-X github.com/infrena/infrena-provider-fake/internal/fake.Version=1.2.3".
 var Version = "0.1.0"
 
 // Plugin is the fake provider before configuration: its schemas, and how to build one
@@ -1387,7 +1387,7 @@ func (pl *Plugin) New(cfg provider.Config) (provider.Provider, error) {
 		path = text
 	}
 	// Relative to the PROJECT, which the host supplies — not to this process's working
-	// directory, which is inherited from infrata and is not where the project is.
+	// directory, which is inherited from infrena and is not where the project is.
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(cfg.ProjectDir, path)
 	}
@@ -1423,12 +1423,12 @@ func rejectUnknownKeys(config map[string]value.Value) error {
 - [ ] **Step 4: Write `main.go`**
 
 ```go
-// Command infrata-plugin-fake is infrata's fake provider. Infrata runs it; you do not.
+// Command infrena-plugin-fake is infrena's fake provider. Infrena runs it; you do not.
 package main
 
 import (
-	"github.com/infrata/infrata-provider-fake/internal/fake"
-	"github.com/infrata/infrata/pkg/pluginsdk"
+	"github.com/infrena/infrena-provider-fake/internal/fake"
+	"github.com/infrena/infrena/pkg/pluginsdk"
 )
 
 func main() { pluginsdk.Main(fake.NewPlugin()) }
@@ -1437,18 +1437,18 @@ func main() { pluginsdk.Main(fake.NewPlugin()) }
 - [ ] **Step 5: Run to verify pass**
 
 Run: `go vet ./... && gofmt -l . && go test -count=1 -race ./...`
-Expected: `ok` for `internal/fake`; `cmd/infrata-plugin-fake` reports `[no test files]`.
+Expected: `ok` for `internal/fake`; `cmd/infrena-plugin-fake` reports `[no test files]`.
 
 - [ ] **Step 6: Verify the binary by hand**
 
 ```bash
-go build -o bin/infrata-plugin-fake ./cmd/infrata-plugin-fake
-./bin/infrata-plugin-fake; echo "exit=$?"
-(cd ../ilan && go build -o "$OLDPWD/bin/infrata" ./cmd/infrata)
-mkdir -p /tmp/fake-explain && ./bin/infrata --chdir /tmp/fake-explain --plugin-dir ./bin explain fake.database
+go build -o bin/infrena-plugin-fake ./cmd/infrena-plugin-fake
+./bin/infrena-plugin-fake; echo "exit=$?"
+(cd ../ilan && go build -o "$OLDPWD/bin/infrena" ./cmd/infrena)
+mkdir -p /tmp/fake-explain && ./bin/infrena --chdir /tmp/fake-explain --plugin-dir ./bin explain fake.database
 ```
 
-Expected: the first command prints `fake is an infrata provider plugin: it is run by infrata, not
+Expected: the first command prints `fake is an infrena provider plugin: it is run by infrena, not
 directly.` and `exit=2`; `explain` prints `fake.database`, `engine … (replaces on change)`,
 `password … (sensitive)`, `size … (default: 10)`, `Computed: endpoint`, `Requires: fake.network`.
 `explain` needs no `infra.yml` (verified against the builtin). What is NOT yet verified is that it
@@ -1462,25 +1462,25 @@ record the behaviour in the verification log.
 - `New`: remove the `if !filepath.IsAbs(path)` guard (always join) → `TestAnAbsoluteCloudPathIsUsedAsWritten`.
 - `rejectUnknownKeys`: `if len(unknown) == 0` → `if true` → `TestAnUnknownConfigurationKeyIsRefused`.
 - `definitions.go`: `size` `Default: int64(10)` → `Default: "10"` (compiles; wrong kind) → `TestSchemasLoadThroughTheHost` fails at `Open`. (Not `Default: 10`: an `int` is accepted and arrives as `int64(10)` — `ilan/pkg/schema/attribute.go:70` — so it discriminates nothing.)
-- `stateOf`: add `if name == "password" { continue }` → `TestADiscoveredSecretIsRedactedByTheHost` fails. Honest limit: this proves the test reads the value; the sabotage that proves the HOST forces sensitivity is removing `WithSensitive` in `ilan/internal/pluginhost/adapter.go`, which infrata's `trust_test.go` owns. Do not edit `../ilan` to run it.
+- `stateOf`: add `if name == "password" { continue }` → `TestADiscoveredSecretIsRedactedByTheHost` fails. Honest limit: this proves the test reads the value; the sabotage that proves the HOST forces sensitivity is removing `WithSensitive` in `ilan/internal/pluginhost/adapter.go`, which infrena's `trust_test.go` owns. Do not edit `../ilan` to run it.
 - `ClassifyError`: always `provider.NotSafeToRetry` → `TestAnInjectedFailureKeepsItsClassificationAcrossThePipe`.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add internal/fake/plugin.go internal/fake/plugin_test.go internal/fake/protocol_test.go cmd/infrata-plugin-fake/main.go
-git commit -m "fake: the plugin binary, tested through infrata's own host
+git add internal/fake/plugin.go internal/fake/plugin_test.go internal/fake/protocol_test.go cmd/infrena-plugin-fake/main.go
+git commit -m "fake: the plugin binary, tested through infrena's own host
 
 plugintest runs the real host over a pipe, so schema validation, redaction and error
 classification are proven the way a subprocess experiences them rather than asserted about
 the provider in isolation. The implicit instance keeps its historical cloud path through the
 rename; an absolute cloud path is no longer rebased onto the project.
-Sabotage-verified: implicit path, absolute path, unknown keys, default kind, host redaction, classification." -- internal/fake/plugin.go internal/fake/plugin_test.go internal/fake/protocol_test.go cmd/infrata-plugin-fake/main.go
+Sabotage-verified: implicit path, absolute path, unknown keys, default kind, host redaction, classification." -- internal/fake/plugin.go internal/fake/plugin_test.go internal/fake/protocol_test.go cmd/infrena-plugin-fake/main.go
 ```
 
 ---
 
-### Task 6: The compliance suite against a real `infrata` (`-tags e2e`)
+### Task 6: The compliance suite against a real `infrena` (`-tags e2e`)
 
 Not part of `go test ./...` (D6). Run occasionally, and always before a release:
 `go test -tags e2e -count=1 ./e2e/`.
@@ -1489,7 +1489,7 @@ Not part of `go test ./...` (D6). Run occasionally, and always before a release:
 - Create: `e2e/e2e_test.go`, `e2e/testdata/basic/infra.yml`, `e2e/testdata/instances/infra.yml`
 
 **Interfaces:**
-- Consumes: the binary from Task 5; infrata's CLI as recorded in the verification log (exit codes
+- Consumes: the binary from Task 5; infrena's CLI as recorded in the verification log (exit codes
   2/0/1, `--plugin-dir`, `--auto-approve`, `--output`, `import <env> <type>.<id> --generate`).
 - Produces: `e2e/testdata/basic/infra.yml`, which Task 7's README quotes verbatim and Task 7's
   `TestReadmeQuotesTheTestedExample` checks.
@@ -1556,10 +1556,10 @@ resources:
 ```go
 //go:build e2e
 
-// Package e2e runs a real infrata binary against a real infrata-plugin-fake binary.
+// Package e2e runs a real infrena binary against a real infrena-plugin-fake binary.
 //
-// Not part of `go test ./...`: it builds infrata from source, so it is slow and needs a
-// checkout. Run it with `go test -tags e2e -count=1 ./e2e/`. INFRATA_SRC points at the
+// Not part of `go test ./...`: it builds infrena from source, so it is slow and needs a
+// checkout. Run it with `go test -tags e2e -count=1 ./e2e/`. INFRENA_SRC points at the
 // checkout; the default is the sibling ../ilan that go.mod's replace already assumes.
 package e2e
 
@@ -1574,8 +1574,8 @@ import (
 )
 
 var (
-	infrataBin string // absolute path to the built infrata
-	pluginDir  string // directory holding the built infrata-plugin-fake
+	infrenaBin string // absolute path to the built infrena
+	pluginDir  string // directory holding the built infrena-plugin-fake
 	skipReason string // non-empty when the binaries could not be built
 )
 
@@ -1587,20 +1587,20 @@ func TestMain(m *testing.M) {
 	}
 	code := func() int {
 		defer os.RemoveAll(tmp)
-		src := os.Getenv("INFRATA_SRC")
+		src := os.Getenv("INFRENA_SRC")
 		if src == "" {
 			src = filepath.Join("..", "..", "ilan")
 		}
-		if _, err := os.Stat(filepath.Join(src, "cmd", "infrata")); err != nil {
-			skipReason = fmt.Sprintf("no infrata checkout at %s (set INFRATA_SRC): %v", src, err)
+		if _, err := os.Stat(filepath.Join(src, "cmd", "infrena")); err != nil {
+			skipReason = fmt.Sprintf("no infrena checkout at %s (set INFRENA_SRC): %v", src, err)
 			fmt.Fprintln(os.Stderr, "E2E SKIPPED: "+skipReason)
 			return m.Run()
 		}
-		infrataBin = filepath.Join(tmp, "infrata")
+		infrenaBin = filepath.Join(tmp, "infrena")
 		pluginDir = filepath.Join(tmp, "plugins")
 		for _, b := range []struct{ dir, out, pkg string }{
-			{src, infrataBin, "./cmd/infrata"},
-			{"..", filepath.Join(pluginDir, "infrata-plugin-fake"), "./cmd/infrata-plugin-fake"},
+			{src, infrenaBin, "./cmd/infrena"},
+			{"..", filepath.Join(pluginDir, "infrena-plugin-fake"), "./cmd/infrena-plugin-fake"},
 		} {
 			cmd := exec.Command("go", "build", "-o", b.out, b.pkg)
 			cmd.Dir = b.dir
@@ -1639,19 +1639,19 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
-// infrata runs the CLI in dir and returns combined output and the exit code.
-func infrata(t *testing.T, dir string, args ...string) (string, int) {
+// infrena runs the CLI in dir and returns combined output and the exit code.
+func infrena(t *testing.T, dir string, args ...string) (string, int) {
 	t.Helper()
-	cmd := exec.Command(infrataBin, append(args, "--plugin-dir", pluginDir)...)
+	cmd := exec.Command(infrenaBin, append(args, "--plugin-dir", pluginDir)...)
 	cmd.Dir = dir
 	// Only the plugin directory above may supply plugins: nothing from the developer's machine.
-	cmd.Env = append(os.Environ(), "INFRATA_PLUGIN_PATH=", "HOME="+t.TempDir())
+	cmd.Env = append(os.Environ(), "INFRENA_PLUGIN_PATH=", "HOME="+t.TempDir())
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		code = exitErr.ExitCode()
 	} else if err != nil {
-		t.Fatalf("running infrata %v: %v", args, err)
+		t.Fatalf("running infrena %v: %v", args, err)
 	}
 	return string(out), code
 }
@@ -1659,13 +1659,13 @@ func infrata(t *testing.T, dir string, args ...string) (string, int) {
 // expect runs a command and fails unless the exit code and every wanted substring match.
 func expect(t *testing.T, dir string, wantCode int, want []string, args ...string) string {
 	t.Helper()
-	out, code := infrata(t, dir, args...)
+	out, code := infrena(t, dir, args...)
 	if code != wantCode {
-		t.Fatalf("infrata %s: exit %d, want %d\n%s", strings.Join(args, " "), code, wantCode, out)
+		t.Fatalf("infrena %s: exit %d, want %d\n%s", strings.Join(args, " "), code, wantCode, out)
 	}
 	for _, w := range want {
 		if !strings.Contains(out, w) {
-			t.Fatalf("infrata %s: output lacks %q\n%s", strings.Join(args, " "), w, out)
+			t.Fatalf("infrena %s: output lacks %q\n%s", strings.Join(args, " "), w, out)
 		}
 	}
 	return out
@@ -1675,7 +1675,7 @@ func expect(t *testing.T, dir string, wantCode int, want []string, args ...strin
 func planOps(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	outPath := filepath.Join(t.TempDir(), "plan.json")
-	infrata(t, dir, "plan", "dev", "--output", outPath)
+	infrena(t, dir, "plan", "dev", "--output", outPath)
 	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("plan wrote no --output file: %v", err)
@@ -1778,7 +1778,7 @@ func TestTheWorkflow(t *testing.T) {
 		expect(t, dir, 2, []string{"1 to destroy"}, "plan", "dev")
 		expect(t, dir, 2, []string{"0 failed"}, "apply", "dev", "--auto-approve")
 	})
-	t.Run("discover and import adopt what infrata did not create", func(t *testing.T) {
+	t.Run("discover and import adopt what infrena did not create", func(t *testing.T) {
 		editCloud(t, cloud, func(doc map[string]any) {
 			resourcesOf(doc)["net-77"] = map[string]any{
 				"type": "fake.network", "attributes": map[string]any{"cidr": "172.16.0.0/12", "id": "net-77"},
@@ -1845,17 +1845,17 @@ Each against the built binary (the suite rebuilds it):
 - `defaultCloudPath`: return `DefaultCloudPath` for every instance → `TestTwoInstancesKeepSeparateClouds`.
 - `begin`: never return the injected error → `an injected failure fails the apply, once`.
 - `Import`: drop the type check AND return type `fake.database` → `discover and import…` (import or re-plan fails); record which.
-- Rename `INFRATA_SRC` to a missing path → both tests SKIP with the `E2E SKIPPED:` line on stderr (not PASS silently).
+- Rename `INFRENA_SRC` to a missing path → both tests SKIP with the `E2E SKIPPED:` line on stderr (not PASS silently).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add e2e/e2e_test.go e2e/testdata/basic/infra.yml e2e/testdata/instances/infra.yml
-git commit -m "e2e: prove the plugin against a real infrata binary, on demand
+git commit -m "e2e: prove the plugin against a real infrena binary, on demand
 
-Unit and plugintest coverage cannot show that infrata launches the binary, finds it on the
+Unit and plugintest coverage cannot show that infrena launches the binary, finds it on the
 search path, or that the whole plan/apply/drift/import/destroy loop converges. This does,
-behind a build tag because it builds infrata from source.
+behind a build tag because it builds infrena from source.
 Sabotage-verified: update removal, instance separation, failure injection, import type, skip path." -- e2e/e2e_test.go e2e/testdata/basic/infra.yml e2e/testdata/instances/infra.yml
 ```
 
@@ -1914,12 +1914,12 @@ Expected: FAIL — the current README quotes no fixture.
 - [ ] **Step 3: Capture real output**
 
 ```bash
-go build -o bin/infrata-plugin-fake ./cmd/infrata-plugin-fake
-(cd ../ilan && go build -o "$OLDPWD/bin/infrata" ./cmd/infrata)
+go build -o bin/infrena-plugin-fake ./cmd/infrena-plugin-fake
+(cd ../ilan && go build -o "$OLDPWD/bin/infrena" ./cmd/infrena)
 D=$(mktemp -d) && cp e2e/testdata/basic/infra.yml "$D/"
-./bin/infrata --chdir "$D" --plugin-dir "$PWD/bin" plan dev
-./bin/infrata --chdir "$D" --plugin-dir "$PWD/bin" apply dev --auto-approve
-./bin/infrata --chdir "$D" --plugin-dir "$PWD/bin" plan dev
+./bin/infrena --chdir "$D" --plugin-dir "$PWD/bin" plan dev
+./bin/infrena --chdir "$D" --plugin-dir "$PWD/bin" apply dev --auto-approve
+./bin/infrena --chdir "$D" --plugin-dir "$PWD/bin" plan dev
 cat "$D/.infra/fake-cloud.json"
 ```
 
@@ -1931,22 +1931,22 @@ and say so in the README).
 Sections, in this order, each with the stated content:
 
 1. **Title and two sentences.** What it is for, including "no network, no credentials": the fake
-   provider for infrata, whose cloud is a JSON file on disk, so infrata's whole engine — planning,
+   provider for infrena, whose cloud is a JSON file on disk, so infrena's whole engine — planning,
    applying, drift, import, failure handling — can be exercised with no network and no credentials.
 2. **Build and install.** The sibling layout (`ilan/` next to this repo, because of the `replace`);
-   `go build -o infrata-plugin-fake ./cmd/infrata-plugin-fake`; the search path, first match wins:
-   `--plugin-dir` / `INFRATA_PLUGIN_PATH`, `<project>/.infra/plugins/`, `~/.local/share/infrata/plugins/`,
+   `go build -o infrena-plugin-fake ./cmd/infrena-plugin-fake`; the search path, first match wins:
+   `--plugin-dir` / `INFRENA_PLUGIN_PATH`, `<project>/.infra/plugins/`, `~/.local/share/infrena/plugins/`,
    `$PATH`; `--verbose` shows which was used. Running the binary by hand prints that it is run by
-   infrata and exits 2 — that is expected.
+   infrena and exits 2 — that is expected.
 3. **Try it.** The fixture, quoted exactly, in a ```` ```yaml ```` block; then the three commands
-   `infrata plan dev`, `infrata apply dev --auto-approve`, `infrata plan dev`, each followed by its
+   `infrena plan dev`, `infrena apply dev --auto-approve`, `infrena plan dev`, each followed by its
    Step 3 output. Note the exit codes: 2 when plan has changes or apply applied, 0 when clean.
 4. **The cloud file.** Its path (`.infra/fake-cloud.json` for a project with no `providers:` block;
    `.infra/fake-cloud-<instance>.json` for a named instance; `cloud:` overrides, relative to the
    project or absolute); the Step 3 file content; a table of top-level keys `resources`, `failures`,
    `latency_ms`, `next_id`. **Editing it by hand is supported, and is how you simulate drift** —
    show changing `engine` to `mysql` and the resulting `-/+ … (replacement forced by: engine)` plan
-   line. A resource added by hand with no `address` is what `infrata discover` / `import` find.
+   line. A resource added by hand with no `address` is what `infrena discover` / `import` find.
 5. **Resource types.** One table per type from `definitions.go`: attribute, kind, and flags —
    Required, Computed, Sensitive, ForceNew (shown as "replaces on change"), Default — plus each
    type's requirement and computed-value format (`net-N`, `db-N.db.fake`, `https://app-N.fake`).
@@ -1956,19 +1956,19 @@ Sections, in this order, each with the stated content:
      {"op": "create", "address": "extra", "nth": 1, "retryability": "conditional", "message": "injected: quota exceeded"}
    ]
    ```
-   Fields: `op` (`create`, `read`, `update`, `delete`, `discover`, `import`), `address` (infrata's
+   Fields: `op` (`create`, `read`, `update`, `delete`, `discover`, `import`), `address` (infrena's
    address; for `import` the provider ID; for `discover` empty), `nth` (fires on the nth matching
    call, once; default 1), `retryability` (`not_safe` default, `conditional`, `safe` — what each
-   makes infrata's executor do), `message`. `seen`/`fired` are written back by the plugin; delete
+   makes infrena's executor do), `message`. `seen`/`fired` are written back by the plugin; delete
    them to re-arm a rule. An unknown retryability is refused with an error naming it. Then
-   `"latency_ms": 250` — applied to every operation, concurrently, and abandoned if infrata cancels
+   `"latency_ms": 250` — applied to every operation, concurrently, and abandoned if infrena cancels
    before the operation starts.
 7. **Several instances.** The `e2e/testdata/instances/infra.yml` example and which file each instance uses.
-8. **Upgrading from infrata's built-in `test` provider.** Types are renamed `test.*` → `fake.*`
+8. **Upgrading from infrena's built-in `test` provider.** Types are renamed `test.*` → `fake.*`
    (why, in one sentence); the implicit instance's cloud file keeps its path; state naming `test.*`
-   is not migrated by this plugin and keeps working only while infrata still ships the builtin.
+   is not migrated by this plugin and keeps working only while infrena still ships the builtin.
 9. **Development.** `go test -count=1 ./...`; `go test -tags e2e -count=1 ./e2e/` (needs the
-   infrata checkout, `INFRATA_SRC` to override), run before a release.
+   infrena checkout, `INFRENA_SRC` to override), run before a release.
 10. **Writing your own provider.** Point at `AGENT.md` (condensed reference, copy it into your repo)
     and `docs/writing-a-provider.md` (the long-form guide).
 11. **Licence.** Keep `TBD.` — not this plan's decision.
@@ -2013,8 +2013,8 @@ the grep in Step 2 plus re-reading each changed section against the code it desc
    user gave it), `Values` (resolved configuration, nothing reserved), `ProjectDir` (for resolving a
    relative path), plus `cfg.Value(key)`. Say why it is a struct: a new field is additive for plugins
    compiled by other people; a new parameter is not.
-2. **§1, new subsection "Depending on infrata".** Until `github.com/infrata/infrata` is published, a
-   plugin needs `replace github.com/infrata/infrata => <path to a checkout>` in `go.mod`, and needs
+2. **§1, new subsection "Depending on infrena".** Until `github.com/infrena/infrena` is published, a
+   plugin needs `replace github.com/infrena/infrena => <path to a checkout>` in `go.mod`, and needs
    nothing else: the SDK and its dependencies are standard library only.
 3. **§7 The project directory.** `cfg.ProjectDir`, not "New receives". Add: use an absolute path as
    written — joining it onto the project directory silently rebases it (the fake provider did).
@@ -2030,27 +2030,27 @@ the grep in Step 2 plus re-reading each changed section against the code it desc
    a unit test that your Provider marks sensitivity or carries bookkeeping — it should not; assert
    the host does it, through `plugintest`." Point at `internal/fake/protocol_test.go` as the example.
 5. **§8 "Test the binary once".** Point at `e2e/` here as the example, and say to keep it behind a
-   build tag if it builds infrata.
-6. **§10 checklist.** Replace `Mutating the cloud outside infrata and running refresh reports the drift`
-   with `Mutating the cloud outside infrata makes the next plan propose the change (refresh records it
+   build tag if it builds infrena.
+6. **§10 checklist.** Replace `Mutating the cloud outside infrena and running refresh reports the drift`
+   with `Mutating the cloud outside infrena makes the next plan propose the change (refresh records it
    into state; it does not print a diff)`. Add `Removing an optional attribute from configuration
    converges: apply, then plan shows no changes` and `An absolute path in configuration is used as
    written`.
 7. **§2 table, `Update`.** Add to Notes: "make the resource match `desired` — including removing what
    `desired` no longer has; `desired` never contains computed attributes, so keep those."
-8. **§1 "Depending on infrata" (from item 2).** Also: the module's `go` directive must be at least
-   infrata's own (1.27 as of 2026-09-13). (R16: the plan originally added here that Go's error for a
+8. **§1 "Depending on infrena" (from item 2).** Also: the module's `go` directive must be at least
+   infrena's own (1.27 as of 2026-09-13). (R16: the plan originally added here that Go's error for a
    too-low directive "does not name the dependency that caused it" — that is false and was struck.
    Task 8's reviewer reproduced the error directly: `go: <module>@<version> requires go >= X
    (running go Y; …)` names the module. With `GOTOOLCHAIN=auto`, Go instead fetches a newer
    toolchain silently; only a pinned `GOTOOLCHAIN=local` (or offline) surfaces the named-module
    error.)
-9. **§9 Releasing — the manifest.** Every plugin repository ships `plugin.yaml` at its root, per infrata
+9. **§9 Releasing — the manifest.** Every plugin repository ships `plugin.yaml` at its root, per infrena
    `PLAN.md` §31.2: `manifest: 1` (checked first), `name`, `version`, `protocol` (a list), `platforms`
-   (`GOOS/GOARCH` per published build), `description`; optional `infrata` (a `pkg/semver` constraint;
+   (`GOOS/GOARCH` per published build), `description`; optional `infrena` (a `pkg/semver` constraint;
    absent means unconstrained, never `">= 0.0.0"`) and `source`. It is read at the release TAG, never
    the default branch. Deliberately absent: checksums (`SHA256SUMS` is a release asset), asset names
-   (the convention `infrata-plugin-<name>_<version>_<goos>_<goarch>.tar.gz`, `.zip` on Windows), and
+   (the convention `infrena-plugin-<name>_<version>_<goos>_<goarch>.tar.gz`, `.zip` on Windows), and
    resource types (`name` implies them). Point at this repository's `plugin.yaml`.
 10. **§9 Releasing — the release gate.** A release must fail unless the git tag, `plugin.yaml`'s
     `version` and the binary's reported version agree; a drift test is a weaker substitute someone can
@@ -2090,7 +2090,7 @@ loop forever. A guide that the reference plugin cannot follow is not a guide." -
 ### Task 9: `docs/writing-a-provider.md`
 
 The long-form guide: for a competent Go developer who knows their cloud's API and nothing about
-infrata. AGENT.md is the condensed reference; this explains. Every code excerpt is copied from this
+infrena. AGENT.md is the condensed reference; this explains. Every code excerpt is copied from this
 repository or from `../ilan/pkg/*` and cites `path:line`, so none is invented.
 
 **Files:**
@@ -2098,7 +2098,7 @@ repository or from `../ilan/pkg/*` and cites `path:line`, so none is invented.
 
 - [ ] **Step 1: Write it, in these sections**
 
-1. **What a plugin is.** A process infrata launches; NDJSON over stdio; `pluginsdk.Main`; stdout is
+1. **What a plugin is.** A process infrena launches; NDJSON over stdio; `pluginsdk.Main`; stdout is
    the protocol (and why a stray print surfaces as an unrelated parse error much later); stderr is the
    log, prefixed and shown under `--verbose`, with its tail quoted when a plugin crashes; the cookie.
 2. **The two interfaces, method by method, and what the host does to each result.** A table plus prose:
@@ -2115,10 +2115,10 @@ repository or from `../ilan/pkg/*` and cites `path:line`, so none is invented.
    `(known after apply)`, `-/+ … (replacement forced by: engine)`, `<sensitive>`,
    `10 [default, from provider default]`. Why a default is a datum. The `Update` contract (D4): make
    the resource match `desired`, remove what it no longer has, keep computed attributes.
-4. **`Requirements`.** What missing-dependency detection gives a user (infrata reports the missing
+4. **`Requirements`.** What missing-dependency detection gives a user (infrena reports the missing
    resource with a suggested fix before any API call) and how the fake's
    `fake.database → fake.network` requirement shows in `explain` (`Requires:`).
-5. **Errors and retries.** The three classes and what infrata's executor does with each —
+5. **Errors and retries.** The three classes and what infrena's executor does with each —
    read `../ilan/internal/executor` for the exact retry behaviour of `SafeToRetry`,
    `ConditionallyRetryable` and `NotSafeToRetry` per operation (create, update, delete, read) and
    state it precisely, citing the file; if a class behaves the same for some operation, say so rather
@@ -2139,27 +2139,27 @@ repository or from `../ilan/pkg/*` and cites `path:line`, so none is invented.
 9. **What the host enforces, so you don't.** The list from `PLAN.md` §31.1, each with a sentence on
    the failure it prevents, and the explicit instruction not to reimplement any of it.
 10. **Versioning and releasing.** `Version()` and `-ldflags -X`; building per `GOOS`/`GOARCH`; naming
-    the artefact `infrata-plugin-<name>`; a project's `plugins: {name: ">= 1.2.0, < 2.0.0"}` constraint
+    the artefact `infrena-plugin-<name>`; a project's `plugins: {name: ">= 1.2.0, < 2.0.0"}` constraint
     (comparison operators on MAJOR.MINOR.PATCH, comma is AND; one version per plugin because instances
     share a process); the protocol version, not the Go types, is the compatibility contract.
-11. **Depending on infrata today.** The `replace` directive, until the module is published, and the
-    `go` directive, which must be at least infrata's own (1.27 as of 2026-09-13).
-12. **The manifest, `plugin.yaml`.** What infrata `PLAN.md` §31.2 asks of every plugin repository and
+11. **Depending on infrena today.** The `replace` directive, until the module is published, and the
+    `go` directive, which must be at least infrena's own (1.27 as of 2026-09-13).
+12. **The manifest, `plugin.yaml`.** What infrena `PLAN.md` §31.2 asks of every plugin repository and
     why its shape follows its purpose (read over the network, before any binary is downloaded, by
-    infrata builds for years): each key and whether it is required; why it is read at a release TAG
-    and never the default branch; why the format is versioned when infrata's configuration language
-    is not; why `infrata` is optional (absent means unconstrained, not `">= 0.0.0"`); and what is
+    infrena builds for years): each key and whether it is required; why it is read at a release TAG
+    and never the default branch; why the format is versioned when infrena's configuration language
+    is not; why `infrena` is optional (absent means unconstrained, not `">= 0.0.0"`); and what is
     deliberately left out (checksums, asset names, resource types) and where each lives instead. This
     repository's `plugin.yaml` is the worked example.
 13. **The release gate.** Why a release, not a drift test, is what keeps tag, manifest and binary in
     agreement; why `Version()` reports `0.0.0-dev` until a release stamps it; how `scripts/release-check`
-    reads the version from the binary's own handshake with no infrata involved; the archive naming
+    reads the version from the binary's own handshake with no infrena involved; the archive naming
     convention `plugins install` constructs, and `SHA256SUMS`. Cite `scripts/` and
     `.github/workflows/release.yml`.
 
 - [ ] **Step 2: Verify every claim**
 
-Make a checklist of every factual sentence about infrata's behaviour (expect 30–50). For each, open
+Make a checklist of every factual sentence about infrena's behaviour (expect 30–50). For each, open
 the cited file or run the command, and tick it. Any sentence that cannot be checked is removed or
 reworded as a recommendation. Append the notable findings — especially any that differ from AGENT.md
 — to this plan's verification log, and fix AGENT.md in the same commit if it is wrong.
@@ -2168,10 +2168,10 @@ reworded as a recommendation. Append the notable findings — especially any tha
 
 ```bash
 git add docs/writing-a-provider.md docs/plans/2026-09-13-port-fake-provider.md
-git commit -m "docs: the long-form guide to writing an infrata provider
+git commit -m "docs: the long-form guide to writing an infrena provider
 
 AGENT.md tells an author what to do; this explains why, for someone who knows their cloud
-and not infrata. Every claim about the host was checked against its code and every excerpt
+and not infrena. Every claim about the host was checked against its code and every excerpt
 cites the file it came from, because the guide is only worth its accuracy." -- docs/writing-a-provider.md docs/plans/2026-09-13-port-fake-provider.md
 ```
 
@@ -2205,25 +2205,25 @@ lines beginning `Ruling:` and `Plan verification-log facts`) to this document:
 - Task 4 Step 5: the `begin` save sabotage fails only `TestNthReadRuleSurvivesAcrossOperations`, because
   Create persists the counter itself (R6); the moved `TestNthReadRuleSurvivesAcrossOperations` sets
   `st.Address`, because Create no longer returns one (R5).
-- Global Constraints: Go `1.27.0`, following infrata's floor (R7).
+- Global Constraints: Go `1.27.0`, following infrena's floor (R7).
 - Verification log, new rows: `explain` loads a plugin from the type prefix via `--plugin-dir` with no
-  project file; `plan --output` lists every resource including `kind: "noop"`; the `infrata:` floor is
+  project file; `plan --output` lists every resource including `kind: "noop"`; the `infrena:` floor is
   enforced for release builds and exempts development builds; `plugins:` is enforced against the
-  handshake version; the discovery defect and its fix in infrata `de33b4d`; the handshake is readable
+  handshake version; the discovery defect and its fix in infrena `de33b4d`; the handshake is readable
   with the cookie and empty stdin; the SDK's hand-run message has a second line.
 - Decisions table: add R8–R19 in one line each (R17: README retry paragraph corrected in Task 7b;
   R18: Task 9's README finding folded into 7b; R19: vault close-out left to the controller), and
-  D10 for the manifest and release gate (user direction, infrata `PLAN.md` §31.2).
+  D10 for the manifest and release gate (user direction, infrena `PLAN.md` §31.2).
 - Task 8 item 8 and Task 9 item 11: delete the claim that Go's error for a too-low `go` directive
   "does not name the dependency". It is false: the error reads
   `go: <module>@<version> requires go >= X (running go Y; …)` (R16, reproduced by Task 8's reviewer).
   Add the correction to the verification log. (Checked at Task 10: Task 9 item 11's plan text never
-  carried this claim — it already read cleanly, "must be at least infrata's own (1.27 as of
+  carried this claim — it already read cleanly, "must be at least infrena's own (1.27 as of
   2026-09-13)" with no assertion about the error's wording — so only Task 8 item 8 needed the edit.)
 
 - [ ] **Step 2: Update CLAUDE.md**
 
-`CLAUDE.md` was edited by the infrata session in `5ce4f13` (the contract table gained §31.2, §61,
+`CLAUDE.md` was edited by the infrena session in `5ce4f13` (the contract table gained §31.2, §61,
 `pkg/semver`, `pkg/plugintest`, and the Go 1.27 note): keep those edits; do not rewrite over them —
 with one exception. Its Go 1.27 note says Go's error for a too-low `go` directive "does not name the
 dependency that caused it". That is false (R16): the error names the module. Correct that clause
@@ -2231,7 +2231,7 @@ and keep the rest of the note.
 Below the title, add `> Project notes (source of truth): Obsidian Vault/projects/labs/infra-tool.md`.
 Replace "Current state" with: what is built (the plugin, the three test layers, the docs); how to run
 each test layer; that the e2e suite needs the `ilan` checkout; and a short "Known limits" list — no
-`test.*` state migration, symlinked cloud paths are not unified, `replace` until infrata is published.
+`test.*` state migration, symlinked cloud paths are not unified, `replace` until infrena is published.
 Shorten "How to plan this work" to a pointer at this plan, since it has been done.
 
 - [ ] **Step 3: Update the vault**
@@ -2239,7 +2239,7 @@ Shorten "How to plan this work" to a pointer at this plan, since it has been don
 In `projects/labs/infra-tool.md` § "The fake provider as its own plugin repo": change "(under way …)"
 to the completion date; add what shipped and any new verification findings; tick nothing that is not
 done. Add a dated line to the change history and one bullet to that day's `projects/labs/daily/`
-note linking the section. Record any new infrata defect as a `- [ ] … #follow-up` checkbox there.
+note linking the section. Record any new infrena defect as a `- [ ] … #follow-up` checkbox there.
 
 - [ ] **Step 4: Commit and hand off**
 
@@ -2257,9 +2257,9 @@ superpowers:finishing-a-development-branch to integrate.
 
 ### Task 11: `plugin.yaml`, and a release that refuses to publish a version disagreement
 
-Added 2026-09-13 at the user's direction, against infrata `PLAN.md` §31.2 (the agreed manifest).
+Added 2026-09-13 at the user's direction, against infrena `PLAN.md` §31.2 (the agreed manifest).
 §31.2: "Its release workflow must assert that THREE things agree: the git tag, the manifest's
-`version`, and the binary's `Version()`." Validating the manifest's own format waits on infrata
+`version`, and the binary's `Version()`." Validating the manifest's own format waits on infrena
 publishing a parser (user decision); this task does not parse YAML in Go.
 
 **Files:**
@@ -2268,17 +2268,17 @@ publishing a parser (user decision); this task does not parse YAML in Go.
 - Modify: `internal/fake/plugin.go` (the `Version` default)
 
 **Interfaces:**
-- Consumes: `cmd/infrata-plugin-fake` (Task 5); `internal/fake.Version` as the `-ldflags -X` target;
+- Consumes: `cmd/infrena-plugin-fake` (Task 5); `internal/fake.Version` as the `-ldflags -X` target;
   the SDK handshake line `{"protocol":1,"name":"fake","version":"<v>"}`, printed when the binary runs
-  with `INFRATA_PLUGIN_COOKIE` set and empty stdin (verified: exit 0).
+  with `INFRENA_PLUGIN_COOKIE` set and empty stdin (verified: exit 0).
 - Produces: `plugin.yaml` (Task 12 validates it); archives named
-  `infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz` (`.zip` for windows) plus `SHA256SUMS`.
+  `infrena-plugin-fake_<version>_<goos>_<goarch>.tar.gz` (`.zip` for windows) plus `SHA256SUMS`.
 
-**R9:** `Version` defaults to `"0.0.0-dev"`, stamped only by a release, as infrata's own is (§61.1).
+**R9:** `Version` defaults to `"0.0.0-dev"`, stamped only by a release, as infrena's own is (§61.1).
 With a default equal to the manifest's version, an unstamped binary passes the three-way check, and a
 broken `-ldflags` path can never be caught. That is what `TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion` proves.
 **R10:** the `linux/arm` build (GOARM=7) is archived as `…_linux_arm.tar.gz`, following §31.2's
-`<goos>_<goarch>` convention that `plugins install` constructs, not infrata's own `armv7` spelling.
+`<goos>_<goarch>` convention that `plugins install` constructs, not infrena's own `armv7` spelling.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2357,7 +2357,7 @@ func TestReleaseCheckRefusesATagTheManifestDoesNotName(t *testing.T) {
 func TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion(t *testing.T) {
 	v := manifestVersion(t)
 	out, err := run(t,
-		[]string{"FAKE_VERSION_SYMBOL=github.com/infrata/infrata-provider-fake/internal/fake.NoSuchVariable"},
+		[]string{"FAKE_VERSION_SYMBOL=github.com/infrena/infrena-provider-fake/internal/fake.NoSuchVariable"},
 		"release-check", "v"+v)
 	if err == nil {
 		t.Fatalf("release-check passed with a binary whose version was never stamped:\n%s", out)
@@ -2367,7 +2367,7 @@ func TestReleaseCheckRefusesABinaryThatDoesNotKnowItsVersion(t *testing.T) {
 	}
 }
 
-// TestBuildReleaseNamesArchivesByTheInstallConvention. `infrata plugins install` constructs
+// TestBuildReleaseNamesArchivesByTheInstallConvention. `infrena plugins install` constructs
 // the download name rather than reading it (§31.2), so a wrong name is an uninstallable release.
 func TestBuildReleaseNamesArchivesByTheInstallConvention(t *testing.T) {
 	v := manifestVersion(t)
@@ -2375,8 +2375,8 @@ func TestBuildReleaseNamesArchivesByTheInstallConvention(t *testing.T) {
 	if out, err := run(t, []string{"PLATFORMS=linux/amd64 windows/amd64"}, "build-release", v, dist); err != nil {
 		t.Fatalf("build-release failed: %v\n%s", err, out)
 	}
-	stem := "infrata-plugin-fake_" + v + "_linux_amd64"
-	for _, name := range []string{stem + ".tar.gz", "infrata-plugin-fake_" + v + "_windows_amd64.zip"} {
+	stem := "infrena-plugin-fake_" + v + "_linux_amd64"
+	for _, name := range []string{stem + ".tar.gz", "infrena-plugin-fake_" + v + "_windows_amd64.zip"} {
 		if _, err := os.Stat(filepath.Join(dist, name)); err != nil {
 			t.Errorf("missing %s: %v", name, err)
 		}
@@ -2403,7 +2403,7 @@ func TestBuildReleaseNamesArchivesByTheInstallConvention(t *testing.T) {
 		}
 		got[h.Name] = true
 	}
-	for _, want := range []string{stem + "/infrata-plugin-fake", stem + "/plugin.yaml", stem + "/README.md"} {
+	for _, want := range []string{stem + "/infrena-plugin-fake", stem + "/plugin.yaml", stem + "/README.md"} {
 		if !got[want] {
 			t.Errorf("%s.tar.gz does not contain %s; it holds %v", stem, want, got)
 		}
@@ -2412,19 +2412,19 @@ func TestBuildReleaseNamesArchivesByTheInstallConvention(t *testing.T) {
 ```
 
 `plugin.yaml` (repo root). The `version` is the NEXT release, since this file on the default branch
-describes unreleased code. `infrata` is omitted: no infrata release exists to name, and §31.2 makes
+describes unreleased code. `infrena` is omitted: no infrena release exists to name, and §31.2 makes
 absence the honest form of "unconstrained".
 
 ```yaml
-# plugin.yaml: what this plugin is, and what it works with. infrata PLAN.md §31.2.
+# plugin.yaml: what this plugin is, and what it works with. infrena PLAN.md §31.2.
 # Read at a release TAG, never at the default branch, which describes unreleased code.
 manifest: 1
 name: fake
 version: 0.1.0
 protocol: [1]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
-description: A fake provider for testing infrata without a cloud account.
-source: https://github.com/infrata/infrata-provider-fake
+description: A fake provider for testing infrena without a cloud account.
+source: https://github.com/infrena/infrena-provider-fake
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -2437,7 +2437,7 @@ Expected: FAIL — `bash: release-check: No such file or directory` (and the sam
 ```bash
 #!/usr/bin/env bash
 # release-check TAG: refuse to release unless the git tag, plugin.yaml's version and the version
-# the built binary reports all agree (infrata PLAN.md §31.2). The manifest is authoritative and
+# the built binary reports all agree (infrena PLAN.md §31.2). The manifest is authoritative and
 # the binary secondary; this check is what blocks a release where they disagree.
 #
 # FAKE_VERSION_SYMBOL overrides the -ldflags -X target. It exists so a test can simulate the
@@ -2463,15 +2463,15 @@ if [[ "$manifest_version" != "$version" ]]; then
   exit 1
 fi
 
-symbol="${FAKE_VERSION_SYMBOL:-github.com/infrata/infrata-provider-fake/internal/fake.Version}"
+symbol="${FAKE_VERSION_SYMBOL:-github.com/infrena/infrena-provider-fake/internal/fake.Version}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrata-plugin-fake" ./cmd/infrata-plugin-fake
+CGO_ENABLED=0 go build -trimpath -ldflags "-X ${symbol}=${version}" -o "$work/infrena-plugin-fake" ./cmd/infrena-plugin-fake
 
 # The binary refuses to start without the host's cookie. With it and an empty stdin, it writes
 # its handshake {"protocol","name","version"} and exits. Captured whole, not piped to head,
 # so pipefail cannot turn an early-closed pipe into a false failure.
-out="$(INFRATA_PLUGIN_COOKIE=release-check "$work/infrata-plugin-fake" </dev/null 2>/dev/null)"
+out="$(INFRENA_PLUGIN_COOKIE=release-check "$work/infrena-plugin-fake" </dev/null 2>/dev/null)"
 handshake="${out%%$'\n'*}"
 reported="$(printf '%s' "$handshake" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 if [[ "$reported" != "$version" ]]; then
@@ -2486,9 +2486,9 @@ echo "release-check: tag, plugin.yaml and binary all say $version"
 
 ```bash
 #!/usr/bin/env bash
-# build-release VERSION OUTDIR: cross-compile infrata-plugin-fake for every platform plugin.yaml
-# lists, archived under the name `infrata plugins install` constructs (infrata PLAN.md §31.2):
-# infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz, and .zip for windows.
+# build-release VERSION OUTDIR: cross-compile infrena-plugin-fake for every platform plugin.yaml
+# lists, archived under the name `infrena plugins install` constructs (infrena PLAN.md §31.2):
+# infrena-plugin-fake_<version>_<goos>_<goarch>.tar.gz, and .zip for windows.
 #
 # PLATFORMS (space-separated GOOS/GOARCH) overrides the manifest's list, so a test can build two
 # platforms instead of eight.
@@ -2509,11 +2509,11 @@ fi
 for platform in $platforms; do
   goos="${platform%/*}"
   goarch="${platform#*/}"
-  name="infrata-plugin-fake"
+  name="infrena-plugin-fake"
   if [[ "$goos" == windows ]]; then name="$name.exe"; fi
   goarm=""
   if [[ "$goarch" == arm ]]; then goarm=7; fi   # R10: archived as _linux_arm, per §31.2's convention
-  stem="infrata-plugin-fake_${version}_${goos}_${goarch}"
+  stem="infrena-plugin-fake_${version}_${goos}_${goarch}"
 
   work="$(mktemp -d)"
   mkdir "$work/$stem"
@@ -2522,8 +2522,8 @@ for platform in $platforms; do
   # paths. Not -s -w: a stack trace is the whole diagnostic when a plugin panics.
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" \
     go build -trimpath \
-      -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=${version}" \
-      -o "$work/$stem/$name" ./cmd/infrata-plugin-fake
+      -ldflags "-X github.com/infrena/infrena-provider-fake/internal/fake.Version=${version}" \
+      -o "$work/$stem/$name" ./cmd/infrena-plugin-fake
   cp README.md plugin.yaml "$work/$stem/"
   if [[ "$goos" == windows ]]; then
     (cd "$work" && zip -qr "$out/$stem.zip" "$stem")
@@ -2544,7 +2544,7 @@ In `internal/fake/plugin.go` replace the `Version` declaration and its comment w
 // build claiming to be a release is how a bug report turns into an afternoon, and a
 // default equal to plugin.yaml's version would let a broken -ldflags path pass the
 // release check. scripts/build-release stamps it:
-// -ldflags "-X github.com/infrata/infrata-provider-fake/internal/fake.Version=1.2.3".
+// -ldflags "-X github.com/infrena/infrena-provider-fake/internal/fake.Version=1.2.3".
 var Version = "0.0.0-dev"
 ```
 
@@ -2558,7 +2558,7 @@ Expected: `ok` for `internal/fake` and `scripts`.
 ```yaml
 name: Release
 
-# Triggered by a version tag. Mirrors infrata's own release workflow: one runner cross-compiles
+# Triggered by a version tag. Mirrors infrena's own release workflow: one runner cross-compiles
 # every platform, the version is stamped by -ldflags and nowhere else, and nothing is published
 # unless the tag, plugin.yaml's version and the binary's reported version agree (PLAN.md §31.2).
 
@@ -2577,28 +2577,28 @@ jobs:
     env:
       GOTOOLCHAIN: local
     steps:
-      # go.mod replaces github.com/infrata/infrata with ../ilan, so both repositories are checked
+      # go.mod replaces github.com/infrena/infrena with ../ilan, so both repositories are checked
       # out side by side and every step runs from this one's directory.
       - uses: actions/checkout@v4
         with:
-          path: infrata-provider-fake
+          path: infrena-provider-fake
       - uses: actions/checkout@v4
         with:
-          repository: infrata/infrata
+          repository: infrena/infrena
           path: ilan
-          # infrata is not public yet; a token with read access to it. Remove once it is.
-          token: ${{ secrets.INFRATA_CHECKOUT_TOKEN }}
+          # infrena is not public yet; a token with read access to it. Remove once it is.
+          token: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
 
       - name: Verify the tag, the manifest and the binary agree
-        working-directory: infrata-provider-fake
+        working-directory: infrena-provider-fake
         run: scripts/release-check "$GITHUB_REF_NAME"
 
-      - name: Test, including the compliance suite against infrata
-        working-directory: infrata-provider-fake
+      - name: Test, including the compliance suite against infrena
+        working-directory: infrena-provider-fake
         run: |
           set -euo pipefail
           test -z "$(gofmt -l .)"
@@ -2607,15 +2607,15 @@ jobs:
           go test -tags e2e -count=1 ./e2e/
 
       - name: Build every platform in plugin.yaml
-        working-directory: infrata-provider-fake
+        working-directory: infrena-provider-fake
         run: scripts/build-release "${GITHUB_REF_NAME#v}" dist
 
       - name: Checksums
-        working-directory: infrata-provider-fake/dist
+        working-directory: infrena-provider-fake/dist
         run: sha256sum ./*.tar.gz ./*.zip > SHA256SUMS && cat SHA256SUMS
 
       - name: Publish the release
-        working-directory: infrata-provider-fake
+        working-directory: infrena-provider-fake
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag dist/*
@@ -2627,7 +2627,7 @@ each result in the report:
   If PyYAML is absent, say so. Do not add a dependency to get it.
 - Run the release steps by hand, in order:
   `scripts/release-check v0.1.0 && scripts/build-release 0.1.0 /tmp/fake-dist && (cd /tmp/fake-dist && sha256sum ./*.tar.gz ./*.zip)`.
-  Expected: 8 archives, including `infrata-plugin-fake_0.1.0_linux_arm.tar.gz` and two `.zip`s.
+  Expected: 8 archives, including `infrena-plugin-fake_0.1.0_linux_arm.tar.gz` and two `.zip`s.
 - Unpack the `linux_amd64` archive, run its binary with the cookie and empty stdin, and confirm the
   handshake reports `0.1.0`.
 
@@ -2645,7 +2645,7 @@ One at a time; confirm the named test fails; revert by editing back:
 git add plugin.yaml scripts/release-check scripts/build-release scripts/scripts_test.go .github/workflows/release.yml internal/fake/plugin.go
 git commit -m "release: plugin.yaml, and a release that refuses a version disagreement
 
-infrata's §31.2 makes the manifest authoritative and requires a release to fail unless the
+infrena's §31.2 makes the manifest authoritative and requires a release to fail unless the
 tag, the manifest's version and the binary's reported version agree; a drift test is
 something a person can delete, a release gate is not. The unstamped default becomes
 0.0.0-dev, because a default equal to the manifest would let a broken -ldflags path pass.
@@ -2655,12 +2655,12 @@ Sabotage-verified: manifest comparison, binary comparison, dev default, windows 
 
 ---
 
-### Task 12: Validate `plugin.yaml` with infrata's parser
+### Task 12: Validate `plugin.yaml` with infrena's parser
 
-Unblocked 2026-09-13: infrata published `pkg/pluginmanifest` (`ee765b1`), the one parser
+Unblocked 2026-09-13: infrena published `pkg/pluginmanifest` (`ee765b1`), the one parser
 `plugins install` will use (PLAN.md §31.2). Verified in a scratchpad spike: this repository's
 `plugin.yaml` parses with no warnings and `SpeaksProtocol([]int{1})` is true; `go mod tidy` adds
-`require gopkg.in/yaml.v3 v3.0.1 // indirect` and a `go.sum` (R21: transitive through infrata — this
+`require gopkg.in/yaml.v3 v3.0.1 // indirect` and a `go.sum` (R21: transitive through infrena — this
 repository still imports nothing third-party itself).
 
 **Files:**
@@ -2669,9 +2669,9 @@ repository still imports nothing third-party itself).
 
 **Interfaces:**
 - Consumes: `pluginmanifest.Parse([]byte) (*Manifest, []string, error)` (warnings in the middle);
-  `(*Manifest).SpeaksProtocol(hostSupports []int) bool`; `(*Manifest).AllowsInfrata(version string) bool`
-  (exempts anything parsing as 0.0.0); `Manifest{Format, Name, Version, Protocol, Platforms, Description, Infrata, Source}`;
-  `pluginproto.Version`; `PluginName`; e2e's `infrataBin`, `skipReason`.
+  `(*Manifest).SpeaksProtocol(hostSupports []int) bool`; `(*Manifest).AllowsInfrena(version string) bool`
+  (exempts anything parsing as 0.0.0); `Manifest{Format, Name, Version, Protocol, Platforms, Description, Infrena, Source}`;
+  `pluginproto.Version`; `PluginName`; e2e's `infrenaBin`, `skipReason`.
 - Produces: nothing later code depends on.
 
 - [ ] **Step 1: Write the failing test**
@@ -2685,12 +2685,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/infrata/infrata/pkg/pluginmanifest"
-	"github.com/infrata/infrata/pkg/pluginproto"
+	"github.com/infrena/infrena/pkg/pluginmanifest"
+	"github.com/infrena/infrena/pkg/pluginproto"
 )
 
-// readManifest parses the repository's plugin.yaml with infrata's own parser: the same code
-// `infrata plugins install` runs against it (PLAN.md §31.2), so a manifest that passes here is one
+// readManifest parses the repository's plugin.yaml with infrena's own parser: the same code
+// `infrena plugins install` runs against it (PLAN.md §31.2), so a manifest that passes here is one
 // install will accept rather than one a second parser merely agreed with.
 func readManifest(t *testing.T) *pluginmanifest.Manifest {
 	t.Helper()
@@ -2700,7 +2700,7 @@ func readManifest(t *testing.T) *pluginmanifest.Manifest {
 	}
 	m, warnings, err := pluginmanifest.Parse(data)
 	if err != nil {
-		t.Fatalf("plugin.yaml is not a manifest infrata accepts: %v", err)
+		t.Fatalf("plugin.yaml is not a manifest infrena accepts: %v", err)
 	}
 	if len(warnings) != 0 {
 		t.Errorf("plugin.yaml parses with warnings, which install would print: %v", warnings)
@@ -2727,7 +2727,7 @@ func TestTheManifestDescribesThisPlugin(t *testing.T) {
 - [ ] **Step 2: Run to verify failure**
 
 Run: `go test -count=1 -run TestTheManifestDescribesThisPlugin ./internal/fake/`
-Expected: FAIL to build — `no required module provides package github.com/infrata/infrata/pkg/pluginmanifest`
+Expected: FAIL to build — `no required module provides package github.com/infrena/infrena/pkg/pluginmanifest`
 or a missing `go.sum` entry for `gopkg.in/yaml.v3`.
 
 - [ ] **Step 3: Tidy the module**
@@ -2741,22 +2741,22 @@ If anything else changes, stop and report it.
 Run: `gofmt -l . && go vet ./... && go test -count=1 ./...`
 Expected: `ok`.
 
-- [ ] **Step 5: The compliance check against the infrata under test**
+- [ ] **Step 5: The compliance check against the infrena under test**
 
-In `e2e/e2e_test.go` add `"github.com/infrata/infrata/pkg/pluginmanifest"` to the imports and this test:
+In `e2e/e2e_test.go` add `"github.com/infrena/infrena/pkg/pluginmanifest"` to the imports and this test:
 
 ```go
-// TestTheInfrataUnderTestSpeaksTheManifestsProtocol applies §31.2's compatibility rules to the
-// infrata this suite built, reading what that build says it speaks from `infrata version --output`.
-// The release rule (AllowsInfrata) exempts a development build, which a checkout build is, so it
-// only bites against a release-stamped infrata; plugin.yaml states no `infrata` constraint today.
-func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
+// TestTheInfrenaUnderTestSpeaksTheManifestsProtocol applies §31.2's compatibility rules to the
+// infrena this suite built, reading what that build says it speaks from `infrena version --output`.
+// The release rule (AllowsInfrena) exempts a development build, which a checkout build is, so it
+// only bites against a release-stamped infrena; plugin.yaml states no `infrena` constraint today.
+func TestTheInfrenaUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 	if skipReason != "" {
 		t.Skip(skipReason)
 	}
 	out := filepath.Join(t.TempDir(), "version.json")
-	if b, err := exec.Command(infrataBin, "version", "--output", out).CombinedOutput(); err != nil {
-		t.Fatalf("infrata version --output: %v\n%s", err, b)
+	if b, err := exec.Command(infrenaBin, "version", "--output", out).CombinedOutput(); err != nil {
+		t.Fatalf("infrena version --output: %v\n%s", err, b)
 	}
 	data, err := os.ReadFile(out)
 	if err != nil {
@@ -2770,7 +2770,7 @@ func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 		} `json:"formats"`
 	}
 	if err := json.Unmarshal(data, &info); err != nil {
-		t.Fatalf("infrata version --output is not the expected JSON: %v\n%s", err, data)
+		t.Fatalf("infrena version --output is not the expected JSON: %v\n%s", err, data)
 	}
 	var protocols []int
 	for _, f := range info.Formats {
@@ -2779,7 +2779,7 @@ func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 		}
 	}
 	if len(protocols) == 0 {
-		t.Fatalf("infrata version --output lists no plugin protocol:\n%s", data)
+		t.Fatalf("infrena version --output lists no plugin protocol:\n%s", data)
 	}
 
 	raw, err := os.ReadFile(filepath.Join("..", "plugin.yaml"))
@@ -2791,26 +2791,26 @@ func TestTheInfrataUnderTestSpeaksTheManifestsProtocol(t *testing.T) {
 		t.Fatalf("plugin.yaml: %v", err)
 	}
 	if !m.SpeaksProtocol(protocols) {
-		t.Errorf("plugin.yaml speaks protocol %v; infrata %s speaks %v", m.Protocol, info.Version, protocols)
+		t.Errorf("plugin.yaml speaks protocol %v; infrena %s speaks %v", m.Protocol, info.Version, protocols)
 	}
-	if !m.AllowsInfrata(info.Version) {
-		t.Errorf("plugin.yaml's infrata constraint %q does not allow infrata %s", m.Infrata, info.Version)
+	if !m.AllowsInfrena(info.Version) {
+		t.Errorf("plugin.yaml's infrena constraint %q does not allow infrena %s", m.Infrena, info.Version)
 	}
 }
 ```
 
-Run: `go vet -tags e2e ./e2e/ && go test -tags e2e -count=1 -run TestTheInfrataUnderTestSpeaksTheManifestsProtocol -v ./e2e/`
-Expected: PASS against infrata HEAD (record `git -C ../ilan log --oneline -1`).
+Run: `go vet -tags e2e ./e2e/ && go test -tags e2e -count=1 -run TestTheInfrenaUnderTestSpeaksTheManifestsProtocol -v ./e2e/`
+Expected: PASS against infrena HEAD (record `git -C ../ilan log --oneline -1`).
 
 - [ ] **Step 6: Documents that said this was waiting**
 
 Run: `grep -n -i "pluginmanifest\|manifest parser\|Task 12\|yaml dependency\|YAML parser\|stdlib\|standard library" CLAUDE.md AGENT.md docs/writing-a-provider.md README.md`
-For each hit that says validation waits on infrata or that no parser exists, change it to the truth:
+For each hit that says validation waits on infrena or that no parser exists, change it to the truth:
 `plugin.yaml` is validated by `pkg/pluginmanifest` (the parser `plugins install` uses) in
-`internal/fake/manifest_test.go`, and checked against the infrata under test in the compliance suite.
+`internal/fake/manifest_test.go`, and checked against the infrena under test in the compliance suite.
 In CLAUDE.md, remove the Task 12 item from "Known limits", and next to "Standard library plus
-`github.com/infrata/infrata` only" note that `go.mod`'s `gopkg.in/yaml.v3 // indirect` arrives through
-infrata's `pkg/pluginmanifest` and is not imported here. In AGENT.md's manifest section, one sentence:
+`github.com/infrena/infrena` only" note that `go.mod`'s `gopkg.in/yaml.v3 // indirect` arrives through
+infrena's `pkg/pluginmanifest` and is not imported here. In AGENT.md's manifest section, one sentence:
 validate your own manifest with `pkg/pluginmanifest.Parse`. In the guide's manifest section, the
 same, citing `ilan/pkg/pluginmanifest/manifest.go` `Parse`. Change nothing else.
 
@@ -2826,12 +2826,12 @@ Data edits compile trivially. Apply each, run the named test, confirm it fails, 
 
 ```bash
 git add internal/fake/manifest_test.go go.mod go.sum e2e/e2e_test.go CLAUDE.md AGENT.md docs/writing-a-provider.md
-git commit -m "manifest: plugin.yaml checked by the parser infrata install will use
+git commit -m "manifest: plugin.yaml checked by the parser infrena install will use
 
-infrata published pkg/pluginmanifest as the one parser for plugin.yaml, so the manifest
+infrena published pkg/pluginmanifest as the one parser for plugin.yaml, so the manifest
 is validated with the code that will judge it at install, not a second reading that could
 agree with itself; the compliance suite applies the protocol and release rules to the
-infrata under test. yaml.v3 enters go.mod only as infrata's indirect dependency.
+infrena under test. yaml.v3 enters go.mod only as infrena's indirect dependency.
 Sabotage-verified: name, protocol, unknown key, protocol lookup." -- internal/fake/manifest_test.go go.mod go.sum e2e/e2e_test.go CLAUDE.md AGENT.md docs/writing-a-provider.md
 ```
 
@@ -2839,7 +2839,7 @@ Sabotage-verified: name, protocol, unknown key, protocol lookup." -- internal/fa
 
 ### Task 7b: README — discovery, the compliance suite, and releasing
 
-Added 2026-09-13. Task 7 ran under scope rulings while infrata's discovery was broken (fixed in infrata
+Added 2026-09-13. Task 7 ran under scope rulings while infrena's discovery was broken (fixed in infrena
 `de33b4d`) and before the e2e suite (Task 6) and the release gate (Task 11) were committed. This task
 adds what those rulings held back, and fixes one wording finding from Task 7's review. Runs after
 Tasks 6 and 11 are complete.
@@ -2856,7 +2856,7 @@ Tasks 6 and 11 are complete.
 - [ ] **Step 1: Write the failing test**
 
 In `internal/fake/readme_test.go`, extend the `want` list in `TestReadmeQuotesTheTestedExample` with:
-`"infrata discover"`, `"import dev fake.network."`, `"-tags e2e"`, `"INFRATA_SRC"`, `"plugin.yaml"`,
+`"infrena discover"`, `"import dev fake.network."`, `"-tags e2e"`, `"INFRENA_SRC"`, `"plugin.yaml"`,
 `"scripts/release-check"`, `"0.0.0-dev"`.
 
 - [ ] **Step 2: Run to verify failure**
@@ -2866,11 +2866,11 @@ Expected: FAIL — `README.md never mentions` each of the new strings.
 
 - [ ] **Step 3: Capture real output**
 
-Build both binaries into `bin/` from infrata HEAD (must include `de33b4d`; record `git -C ../ilan log --oneline -1`).
+Build both binaries into `bin/` from infrena HEAD (must include `de33b4d`; record `git -C ../ilan log --oneline -1`).
 In a fresh temp project copied from `e2e/testdata/basic/infra.yml`: `apply dev --auto-approve`; add by
 hand to `.infra/fake-cloud.json` a resource `"net-77": {"type": "fake.network", "attributes": {"cidr": "172.16.0.0/12", "id": "net-77"}}`
-(no `address`); run `infrata discover`, then `infrata import dev fake.network.net-77 --generate`, then
-`cat discovered/*.yml`, then `infrata plan dev`. Keep all four outputs and exit codes.
+(no `address`); run `infrena discover`, then `infrena import dev fake.network.net-77 --generate`, then
+`cat discovered/*.yml`, then `infrena plan dev`. Keep all four outputs and exit codes.
 
 - [ ] **Step 4: Edit README.md**
 
@@ -2880,19 +2880,19 @@ hand to `.infra/fake-cloud.json` a resource `"net-77": {"type": "fake.network", 
 2. **Injecting failures.** Correct the `seen`/`fired` sentence: `seen` counts matching calls and is written
    back on every one, whether or not the rule fires; `fired` is set when it fires. Delete both to re-arm a rule.
    **Also correct the retryability paragraph** (Task 7 wrote it; Task 9 found it wrong, R17): state what
-   infrata's executor does with each class per operation exactly as `docs/writing-a-provider.md` and
+   infrena's executor does with each class per operation exactly as `docs/writing-a-provider.md` and
    `AGENT.md` §5 now do. Among other things, `conditional` is retried only for an update, never for a
    create or delete, and reads, discover and import are never retried. Re-read `../ilan/internal/executor`
    and cite it in the report; the README, the guide and AGENT.md must not disagree.
-3. **Development.** Add the compliance suite: `go test -tags e2e -count=1 ./e2e/`, which builds infrata
-   from `$INFRATA_SRC` (default `../ilan`) and this plugin, and skips with an `E2E SKIPPED:` line when
+3. **Development.** Add the compliance suite: `go test -tags e2e -count=1 ./e2e/`, which builds infrena
+   from `$INFRENA_SRC` (default `../ilan`) and this plugin, and skips with an `E2E SKIPPED:` line when
    the source is absent. Run it before a release.
-4. **New section "Releasing", after Development.** `plugin.yaml` at the repo root (infrata `PLAN.md`
+4. **New section "Releasing", after Development.** `plugin.yaml` at the repo root (infrena `PLAN.md`
    §31.2): quote the file as committed, and say it is read at a release tag, never the default branch.
    `Version()` reports `0.0.0-dev` in any build a release did not stamp. A `v*` tag runs
    `.github/workflows/release.yml`: `scripts/release-check` refuses a tag, manifest and binary that
    disagree; `scripts/build-release` builds every platform in `plugin.yaml` as
-   `infrata-plugin-fake_<version>_<goos>_<goarch>.tar.gz` (`.zip` for windows); then `SHA256SUMS`.
+   `infrena-plugin-fake_<version>_<goos>_<goarch>.tar.gz` (`.zip` for windows); then `SHA256SUMS`.
    Show `scripts/release-check v0.1.0` run locally, with its real output.
 5. **Try it / Upgrading.** No change, unless a real command in them no longer matches its output (re-run
    them; fix any that drifted and say so in the report).
@@ -2906,7 +2906,7 @@ temp directory; each must print what the README shows.
 - [ ] **Step 6: Sabotage**
 
 - Delete the Releasing section → `TestReadmeQuotesTheTestedExample` names `plugin.yaml`, `scripts/release-check`, `0.0.0-dev`.
-- Delete the discover/import example → the same test names `infrata discover` and `import dev fake.network.`.
+- Delete the discover/import example → the same test names `infrena discover` and `import dev fake.network.`.
 
 - [ ] **Step 7: Commit**
 
@@ -2914,7 +2914,7 @@ temp directory; each must print what the README shows.
 git add README.md internal/fake/readme_test.go
 git commit -m "docs: README covers discovery, the compliance suite and releasing
 
-Task 7 held these back while discovery was broken in infrata and before the suite and
+Task 7 held these back while discovery was broken in infrena and before the suite and
 the release gate existed; all three are real now, so the README shows them with real
 output, and a test fails if any of them disappears. Also corrects when seen and fired
 are written back.

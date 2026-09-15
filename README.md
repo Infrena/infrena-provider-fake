@@ -5,10 +5,10 @@ binary: `infrena-plugin-fake`. Its "cloud" is a hand-editable JSON file on disk,
 engine — planning, applying, drift detection, import, and failure handling — can be exercised with
 no network and no credentials.
 
-> **Renamed.** Infrena was called Infrata until 2026-09-14, when a legal name collision forced a
-> rename: the module, the CLI, the plugin binary (formerly `infrata-plugin-fake`), the environment
-> variables and the manifest's floor key all changed. This plugin's releases up to and including
-> v0.2.0 carry the old names and pair only with infrata v0.3.0 and earlier; this repository's
+> **Renamed.** Infrena took its current name on 2026-09-14, when a legal name collision forced a
+> rename: the module, the CLI, the plugin binary, the environment variables and the manifest's floor
+> key all changed. This plugin's releases up to and including v0.2.0 predate the rename, use the
+> project's former binary and module names, and pair only with engine releases up to v0.3.0; this repository's
 > `main` pairs only with infrena.
 
 > **Syntax.** Configuration examples here use infrena v0.5.0's grammar, where a variable is written
@@ -538,7 +538,7 @@ independently — one instance never sees another's resources.
 
 ## Upgrading from infrena's built-in `test` provider
 
-infrena (then still named infrata) used to carry this fake provider in-tree, serving `test.network`, `test.database`, and
+infrena (before its rename) used to carry this fake provider in-tree, serving `test.network`, `test.database`, and
 `test.application`. As a plugin, it is renamed to `fake.network`, `fake.database`, and
 `fake.application` — a plugin's types must be prefixed with the plugin's own name, and this plugin
 is named `fake`, not `test`.
@@ -607,7 +607,7 @@ committed today:
 ```yaml
 # plugin.yaml: what this plugin is, and what it works with. infrena PLAN.md §31.2.
 # Read at a release TAG, never at the default branch, which describes unreleased code.
-# manifest: 2 since the Infrata -> Infrena rename, which renamed the floor key `infrata:` to
+# manifest: 2 since the rename to Infrena, which replaced the pre-rename floor key with
 # `infrena:`. Releases up to v0.2.0 were tagged with `manifest: 1` and stay readable as they are.
 manifest: 2
 name: fake
@@ -623,16 +623,16 @@ description: A fake provider for testing infrena without a cloud account.
 # floor is the release CI builds and runs the e2e suite with. 0.7.0 raised the plugin protocol to 4,
 # which is what this binary speaks, so an older host refuses it at the handshake; 0.6.0 added
 # provider-declared references (fake.database's network accepts ${network}); 0.5.0 changed the
-# configuration grammar (a variable is ${var.x}). Releases before 0.4.0 are infrata, with a
-# different module path, CLI and plugin binary name.
+# configuration grammar (a variable is ${var.x}). Releases before 0.4.0 predate the rename,
+# with the project's former module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
 infrena: ">= 0.7.0"
 source: https://github.com/infrena/infrena-provider-fake
 ```
 
-`manifest: 2` is the format that spells the floor `infrena:`. infrena's parser refuses `infrata:` in
-a version 2 manifest, and `infrena:` in a version 1 one, so the key and the format version move
+`manifest: 2` is the format that spells the floor `infrena:`. infrena's parser refuses the pre-rename
+floor key (`manifest: 1`'s) in a version 2 manifest, and `infrena:` in a version 1 one, so the key and the format version move
 together.
 
 `infrena: ">= 0.7.0"` names the release `go.mod` requires, so it is also the one CI tests this
@@ -643,7 +643,7 @@ fails at `infrena plugins install`, which is not built yet.
 
 `protocol: [4]` is the plugin protocol this release's binary speaks. A binary built with infrena's
 SDK speaks exactly one: the `pluginproto.Version` of the infrena `go.mod` requires, which v0.3.0
-(released as infrata) raised to 2, v0.6.0 raised to 3 and v0.7.0 raised to 4 (a discovered resource
+(released before the rename) raised to 2, v0.6.0 raised to 3 and v0.7.0 raised to 4 (a discovered resource
 may be flagged as created by the cloud itself, which this plugin never does). So `protocol:` changes
 in the same commit as that `require`, and both `internal/fake/manifest_test.go` and
 `scripts/release-check` refuse a mismatch. Once released, the value never goes stale — v0.1.1's

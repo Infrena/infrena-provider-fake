@@ -55,7 +55,7 @@ func TestTheManifestDescribesThisPlugin(t *testing.T) {
 func TestTheManifestFloorIsTheRequiredRelease(t *testing.T) {
 	m := readManifest(t)
 	if m.Infrena.IsZero() {
-		t.Fatal("plugin.yaml has no infrena: floor, so it claims to work with infrata-named releases too")
+		t.Fatal("plugin.yaml has no infrena: floor, so it claims to work with pre-rename releases too")
 	}
 	for version, want := range map[string]bool{"0.3.9": false, "0.4.9": false, "0.5.9": false, "0.6.0": false, "0.6.2": false, "0.6.9": false, "0.7.0": true, "0.7.1": true} {
 		if got := m.AllowsInfrena(version); got != want {
