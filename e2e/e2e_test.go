@@ -130,8 +130,8 @@ func planOps(t *testing.T, dir string) map[string]string {
 	var doc struct {
 		Operations []struct{ Address, Kind string } `json:"operations"`
 	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("plan --output is not the expected JSON: %v\n%s", err, data)
+	if err := json.Unmarshal(planArtifact(t, data), &doc); err != nil {
+		t.Fatalf("plan --output's artifact is not the expected JSON: %v\n%s", err, data)
 	}
 	ops := map[string]string{}
 	for _, op := range doc.Operations {
@@ -144,6 +144,30 @@ func planOps(t *testing.T, dir string) map[string]string {
 		ops[op.Address] = op.Kind
 	}
 	return ops
+}
+
+// planArtifact returns the plan artifact from a `plan --output` file, in either shape infrena has
+// written. Up to report version 1 (infrena v0.6.x) the file IS the artifact. From report version 2
+// it is the NDJSON report stream, and the artifact rides verbatim on its `{"type":"plan","plan":…}`
+// line (infrena pkg/report, PlanLine). CI's gating job tests the release go.mod requires while its
+// advisory job tests infrena main, so both shapes are live at once. infrena's own `apply --plan`
+// reads both for the same reason.
+func planArtifact(t *testing.T, data []byte) []byte {
+	t.Helper()
+	if json.Valid(data) {
+		return data
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		var l struct {
+			Type string          `json:"type"`
+			Plan json.RawMessage `json:"plan"`
+		}
+		if json.Unmarshal([]byte(line), &l) == nil && l.Type == "plan" && len(l.Plan) > 0 {
+			return l.Plan
+		}
+	}
+	t.Fatalf("plan --output is neither a plan artifact nor a report stream with a plan line:\n%s", data)
+	return nil
 }
 
 // editCloud changes the cloud file the way a person does: as plain JSON, not through this
