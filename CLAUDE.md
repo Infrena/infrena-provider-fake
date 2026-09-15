@@ -54,7 +54,7 @@ the rename it proved the path (ci.yml's first GitHub run 34797363934 green on bo
 path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
 
 **Requires infrena v0.7.0 (`a6b45c6`),** with `infrena: ">= 0.7.0"`, `protocol: [4]` and go.sum
-carrying the v0.7.0 hashes (plugin `version:` still 0.3.0; the next release is 0.4.0). v0.7.0 raised
+carrying the v0.7.0 hashes (plugin `version:` 0.4.0). v0.7.0 raised
 `pluginproto.Version` to 4 (`Supported = {4, 3, 2, 1}`) for `provider.DiscoveredResource.SystemOwned`
 and `SystemOwnedReason`, which this plugin deliberately never sets: its cloud creates nothing for
 itself. v0.7.0 also: `report.Version = 2`, so `plan --output` writes the NDJSON report stream with the

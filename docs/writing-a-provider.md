@@ -1459,7 +1459,7 @@ works with (`PLAN.md` §31.2). This repository's:
 # `infrena:`. Releases up to v0.2.0 were tagged with `manifest: 1` and stay readable as they are.
 manifest: 2
 name: fake
-version: 0.3.0
+version: 0.4.0
 # The protocol THIS RELEASE'S binary speaks: for an SDK-built plugin, exactly one version, the
 # pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
@@ -1635,8 +1635,8 @@ switched to the tagged infrena module, before anything is built or published (`r
 ### Why `Version()` defaults to `0.0.0-dev`
 
 Stamping at release time only proves something if an unstamped build reports a **different** value.
-Suppose `Version` defaulted to `"0.3.0"`, the same as `plugin.yaml`. Then a release whose `-X` flag
-named the wrong symbol would still report `0.3.0`, correct by coincidence, and the gate would pass.
+Suppose `Version` defaulted to `"0.4.0"`, the same as `plugin.yaml`. Then a release whose `-X` flag
+named the wrong symbol would still report `0.4.0`, correct by coincidence, and the gate would pass.
 Go's linker ignores an `-X` for a symbol that doesn't exist, without any error
 (`scripts/release-check:7-8`). With the default at `0.0.0-dev`, a broken stamp shows up as a
 mismatch. `scripts/scripts_test.go:135-146` points `-X` at a nonexistent variable and checks that the
