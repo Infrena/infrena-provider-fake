@@ -37,7 +37,8 @@ dependency is one an outside author has too.
 **Built and passing.** The plugin (`internal/fake/`: cloud file, schemas, CRUD with attribute
 removal, discover/import, failure/latency injection, a per-file lock, plugin configuration) and its
 binary (`cmd/infrena-plugin-fake/`) are complete and documented, with a version-gated release
-workflow that has published v0.1.0, v0.1.1, v0.2.0 and v0.3.0. v0.3.0 (2026-09-14, release run
+workflow that has published v0.1.0, v0.1.1, v0.2.0, v0.3.0 and v0.4.0. v0.4.0 (2026-09-15, release run
+35031069170) is built against infrena v0.7.0: protocol 4, `infrena: ">= 0.7.0"`. v0.3.0 (2026-09-14, release run
 34918230926) is the first under the Infrena name: `infrena-plugin-fake`, infrena >= 0.6.0, protocol 3,
 `manifest: 2`, and breaking because `fake.database.network` gained a `References`. The first three predate the rename and carry the
 project's former binary and module names: v0.2.0 was built against engine v0.3.0 under the former
