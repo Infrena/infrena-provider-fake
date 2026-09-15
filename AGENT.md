@@ -71,14 +71,15 @@ feature complete, so fetching the module needs credentials. The `replace` points
 setup:
 
 ```
-require github.com/infrena/infrena v0.5.0
+require github.com/infrena/infrena v0.6.0
 
 replace github.com/infrena/infrena => ../infrena
 ```
 
 v0.4.0 is the oldest release a require can name: it is the first under the Infrena name, and v0.3.0
 and earlier were published as `github.com/infrata/infrata`. v0.5.0 is the first whose configuration
-grammar writes a variable as `${var.x}`, the syntax these documents use.
+grammar writes a variable as `${var.x}`, the syntax these documents use. v0.6.0 added `References`
+and `Fields` on an attribute, and protocol 3.
 
 Nothing else is needed: the SDK and everything it depends on is the standard library only, so
 there is no other third-party dependency to pull in.
@@ -237,6 +238,8 @@ Return `ErrNotImplemented` for a capability you do not offer, and say so in `Cap
 | `Sensitive` | it is a secret | redacted everywhere — plans, reports, generated configuration |
 | `ForceNew` | changing it replaces rather than updates | the plan says *replace*, loudly, instead of *update* |
 | `Default` | a **datum** of the declared `Kind` | filled in when absent, marked `[default]`, and omitted from generated configuration |
+| `References` | `&schema.Reference{Type, Attribute}`: this attribute holds that resource's attribute, usually its id | configuration may pass the resource whole, `vpc_id: ${vpc}`, and the compiler fills in the attribute you named; both `${vpc}` and `${vpc.id}` are type-checked against `Type`; `explain` prints "refers to" |
+| `Fields` | a `KindMap` attribute's known keys, as nested `Attribute`s; nil means an open map | a path into the map naming an undeclared key, `${x.settings.typo}`, is a compile error listing the keys; an open map is not checked until apply |
 
 **`Default` is a value, not a function.** A schema has to survive a pipe. If a default seems to need
 the environment or the region, it is really either a user's variable (they decide, and can see it) or
@@ -260,6 +263,27 @@ Changing an alias needs a plugin release, because aliases travel with the schema
 Get `Sensitive` right too, but know that the host does not depend on you for it: sensitivity is
 forced from the schema onto every value you return, so a forgotten flag on a value is caught. A
 missing flag on the **schema** is not caught, because nothing else knows.
+
+**`References`: you name the attribute, and infrena never guesses** (infrena v0.6.0, `PLAN.md` §14.3).
+Declare it only on an attribute that holds another resource's identifier — a subnet's `vpc_id`, the
+fake's `database.network` — and name exactly which of the target's attributes it holds: the id or the
+ARN is your API's knowledge, not infrena's. An attribute with no declaration keeps the old behaviour:
+`${vpc}` there is a compile error telling the user to write `${vpc.<attribute>}`, never a fallback to
+"probably the id". A connection string or URL built from another resource is not a reference. A
+module input or output never carries one, so `${vpc}` is refused at a module boundary whatever you
+declare.
+
+**`Fields` only where you really know the keys.** Tags, labels and anything users key freely stay nil
+(open); a `Fields` list on them is a schema lying about a shape.
+
+**Load-time refusals:** `References` naming a type or attribute your plugin does not serve (checked
+by `schema.ValidateAll`, which infrena's registry runs when the CLI loads you — `plugintest.Open`
+does not, so call `schema.ValidateAll(defs)` in a unit test), `References` inside `Fields` (only a
+top-level declaration is ever consulted), and `Fields` on an attribute that is not `KindMap`.
+
+**Declaring either needs infrena v0.6.0:** they travel in the protocol 3 schema, which an older host
+would decode leniently and silently drop. Require v0.6.0, write `protocol: [3]` and an
+`infrena: ">= 0.6.0"` floor.
 
 `Requirements` is what gives a user missing-dependency detection: infrena reports what is missing,
 with a suggested fix, instead of letting your API call fail.
@@ -424,7 +448,8 @@ that does not exist.
 - **The protocol version is the compatibility contract, not the Go types you compiled against.** A
   plugin built against an older SDK keeps working for as long as its protocol version is supported.
   You do not have to rebuild for every infrena release. (v0.3.0, released as infrata, raised the
-  protocol to 2, for `Optional` and `Aliases` in schemas, and infrena still accepts 1.)
+  protocol to 2, for `Optional` and `Aliases` in schemas; v0.6.0 raised it to 3, for `References`
+  and `Fields`; infrena v0.6.0 still accepts 2 and 1.)
 
 ### The manifest
 
@@ -434,10 +459,10 @@ Every plugin repository ships a `plugin.yaml` at its root (infrena `PLAN.md` §3
 manifest: 2
 name: hetzner
 version: 1.2.0
-protocol: [2]
+protocol: [3]
 platforms: [linux/amd64, linux/arm64, darwin/arm64, windows/amd64]
 description: A provider for Hetzner Cloud.
-infrena: ">= 0.5.0"
+infrena: ">= 0.6.0"
 source: https://github.com/example/infrena-plugin-hetzner
 ```
 
@@ -597,6 +622,12 @@ evidence, and AWS worked through as an example.
 - [ ] `Computed` on everything the cloud assigns, with `Optional` added where configuration may set it
       too; `ForceNew` on everything that cannot be changed in place; `Sensitive` on every secret
 - [ ] No schema holds a function; every `Default` is a datum of its declared `Kind`
+- [ ] `References` on every attribute that holds another resource's identifier, naming the exact
+      target attribute, and on nothing else (not a URL or connection string); `schema.ValidateAll`
+      passes on your definitions in a unit test
+- [ ] `Fields` only on a map whose keys you genuinely know; tags and labels stay open (nil)
+- [ ] Declaring `References` or `Fields` means requiring infrena >= v0.6.0, `protocol: [3]`, and an
+      `infrena: ">= 0.6.0"` floor
 - [ ] `Create` and `Update` never return `(nil, nil)`
 - [ ] Values decode and encode through `pkg/value`, never a hand-rolled decoder that rejects a wire
       field it doesn't recognise — the host adds those additively, without a protocol bump

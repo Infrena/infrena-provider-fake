@@ -50,8 +50,16 @@ CI uses the `INFRENA_CHECKOUT_TOKEN` secret; the old `INFRATA_CHECKOUT_TOKEN` is
 the rename it proved the path (ci.yml's first GitHub run 34797363934 green on both jobs; the release
 path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
 
-**Requires infrena v0.5.0 (`546cc2c`),** with `infrena: ">= 0.5.0"` and go.sum carrying the v0.5.0
-hashes; `pluginproto.Version` is still 2. v0.5.0 changed the configuration grammar (its `PLAN.md`
+**Requires infrena v0.6.0 (`870b5f6`),** with `infrena: ">= 0.6.0"`, `protocol: [3]` and go.sum
+carrying the v0.6.0 hashes. v0.6.0 raised `pluginproto.Version` to 3 and added provider-declared
+references (its `PLAN.md` §14.3): `schema.Attribute.References{Type, Attribute}` lets `${res}` be
+filled in as `${res.<attribute>}`, and `Fields` declares a map's known keys (nil = open).
+`fake.database`'s `network` declares `References{fake.network, id}`, so `network: ${network}` works
+(`e2e/testdata/references/`); `database_url` (a connection string, not an identifier) and `tags`
+(open map) deliberately declare nothing. The engine never guesses: an undeclared `${res}` is a
+compile error. `schema.ValidateAll` (dangling reference) runs in infrena's registry, NOT in
+`plugintest.Open`, so `internal/fake/definitions_test.go` calls it directly. The README's headline
+example keeps `${network.id}`. v0.5.0 changed the configuration grammar (its `PLAN.md`
 §10.5): a variable is `${var.x}`, process variables included (`${var.environment}`,
 `${var.project}`); a bare first segment is always a resource (`${vpc.id}`, `${vpc.tags.Name}`); a bare
 `${x}` is a parse error that names the `var.` fix; and `var` is reserved as a resource name. Every
@@ -82,10 +90,10 @@ compiles against `../infrena` through `go.mod`'s `replace`, so pointing `INFRENA
 checkout pairs a host built from one infrena with an SDK compiled against another. CI's tag job avoids
 that: it drops the replace and builds the host from the same tag.)
 
-Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.5.0"` is
+Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.6.0"` is
 the release `go.mod` requires, and is not enforced
-at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.4.x and admits 0.5.0 — and its
-`protocol: [2]` is exactly the `pluginproto.Version`
+at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.5.x and admits 0.6.0 — and its
+`protocol: [3]` is exactly the `pluginproto.Version`
 that require's SDK speaks — the amended §31.2 defines `protocol:` as what this release's binary
 speaks, so it changes in the same commit as the require, and `internal/fake/manifest_test.go` and
 `scripts/release-check` both refuse a mismatch), `scripts/release-check`, `scripts/build-release`,

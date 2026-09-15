@@ -22,6 +22,8 @@ pre-rename engine release or quotes its output, it keeps the name that release a
 **A note on syntax.** Configuration examples use infrena v0.5.0's grammar: a variable is written
 `${var.x}`, and a bare first segment always names a resource, as in `${vpc.id}`. Projects written for
 v0.4.0 and earlier wrote a variable as `${x}`, which v0.5.0 refuses with an error naming the `var.` fix.
+Since v0.6.0 a resource may also be written whole, `${vpc}`, where the consuming attribute declares
+which of its attributes it holds ([section 3](#references-an-attribute-that-holds-another-resources-identifier)).
 
 Contents:
 
@@ -275,7 +277,7 @@ A schema is plain data. It crosses a pipe as JSON, so it holds no functions
 (`pkg/schema/attribute.go:6-9`). Here is the fake's database type:
 
 ```go
-// internal/fake/definitions.go:25-47
+// internal/fake/definitions.go:25-55
 		{
 			Type:        "fake.database",
 			Description: "A fake database. Requires a network.",
@@ -284,7 +286,15 @@ A schema is plain data. It crosses a pipe as JSON, so it holds no functions
 				// A default is a datum, not a function: a schema has to survive a pipe.
 				"size":     {Kind: value.KindInt, Description: "Storage in GB", Default: int64(10)},
 				"password": {Kind: value.KindString, Sensitive: true, Description: "Administrator password"},
-				"network":  {Kind: value.KindString, Description: "Network this database sits in"},
+				// network holds a fake.network's identifier, so it says so: the declaration is
+				// what lets configuration write `network: ${network}` and have infrena fill in
+				// `.id`, and what makes `network: ${db.endpoint}` a compile error. The plugin
+				// decides which attribute a reference means; infrena never guesses one.
+				"network": {
+					Kind:        value.KindString,
+					Description: "Network this database sits in",
+					References:  &schema.Reference{Type: "fake.network", Attribute: "id"},
+				},
 				// A composite attribute is deliberately present: without one,
 				// nothing exercises the conversion between a typed Value and
 				// the plain JSON the hand-editable cloud file must hold.
@@ -313,7 +323,7 @@ Required:
   engine           string   Database engine  (replaces on change)
 
 Optional:
-  network          string   Network this database sits in
+  network          string   Network this database sits in  (refers to fake.network.id)
   password         string   Administrator password  (sensitive)
   size             integer  Storage in GB  (default: 10)
   tags             map      Free-form labels
@@ -332,7 +342,7 @@ Import ID:
 ```
 
 The plan lines quoted below are real output from `README.md`, where the e2e suite applies this exact
-project (`README.md:67-68`).
+project (`README.md:82-83`).
 
 ### `Computed`: the cloud assigns it
 
@@ -346,8 +356,8 @@ unknown (`internal/planner/diff.go:103`):
       endpoint: (known after apply)
 ```
 
-(`README.md:82`.) Another resource can still reference it: `database_url: ${db.endpoint}` plans as
-`(known after apply)` too (`README.md:75`), and is resolved at apply time.
+(`README.md:96`.) Another resource can still reference it: `database_url: ${db.endpoint}` plans as
+`(known after apply)` too (`README.md:90`), and is resolved at apply time.
 
 A computed attribute may not also be `Required` or have a `Default`, and `Optional` is refused
 without `Computed`. `Definition.Validate` refuses all three (`pkg/schema/definition.go:94-101`).
@@ -366,7 +376,7 @@ README's drift example: someone edited `engine` outside infrena.
       engine: "mysql" -> "postgres"
 ```
 
-(`README.md:196-199`.) Get `ForceNew` right. A user approves a plan largely on the difference
+(`README.md:211-214`.) Get `ForceNew` right. A user approves a plan largely on the difference
 between *update* and *destroy and recreate*. If a field is missing `ForceNew` when it should have
 it, the plan proposes an update your API then rejects. If a field has `ForceNew` when it shouldn't,
 every edit to it proposes destroying real infrastructure.
@@ -380,9 +390,9 @@ Mark passwords, tokens and private keys `Sensitive`. Their values are shown as `
       password: <sensitive>
 ```
 
-(`README.md:84`.) You do not need to mark individual values you return. The host forces the flag
+(`README.md:99`.) You do not need to mark individual values you return. The host forces the flag
 from the schema onto every value it receives (`adapter.go:348-353`), and
-`internal/fake/protocol_test.go:86-104` is a test of that: the fake marks nothing, and the host
+`internal/fake/protocol_test.go:121-139` is a test of that: the fake marks nothing, and the host
 still redacts. What the host cannot catch is a **schema** that forgets the flag, because the schema
 is the only thing that knows which attributes are secret.
 
@@ -396,7 +406,7 @@ from (`pkg/value/format.go:251-258`):
       size: 10 [default, from provider default]
 ```
 
-(`README.md:85`.) A default of the wrong kind stops the plugin from loading. It fails as the schema
+(`README.md:100`.) A default of the wrong kind stops the plugin from loading. It fails as the schema
 is encoded (`pkg/schema/wire.go:65-71`). Note `int64(10)`, not `10`: an untyped `10` is an `int`,
 which `schema.DatumValue` accepts (`attribute.go:106-107`), but writing `int64` says what you mean.
 
@@ -511,6 +521,119 @@ for example `Aliases: []string{"cidr", "cidr_block"}` on an attribute declared `
 **Recommendation:** add an alias only for a spelling users genuinely reach for, such as the cloud
 API's own name beside a friendlier one. A plugin generated from an API schema is the case the
 feature was designed for; a hand-written plugin with names chosen once rarely needs one.
+
+### `References`: an attribute that holds another resource's identifier
+
+**infrena:** (v0.6.0, `PLAN.md` §14.3, `pkg/schema/attribute.go:14-35` and `:82-89`) An attribute may
+declare `References: &schema.Reference{Type, Attribute}`: *this attribute holds that type's
+attribute*. The fake declares one, on the database's `network`:
+
+```go
+// internal/fake/definitions.go:33-41
+			// network holds a fake.network's identifier, so it says so: the declaration is
+			// what lets configuration write `network: ${network}` and have infrena fill in
+			// `.id`, and what makes `network: ${db.endpoint}` a compile error. The plugin
+			// decides which attribute a reference means; infrena never guesses one.
+			"network": {
+				Kind:        value.KindString,
+				Description: "Network this database sits in",
+				References:  &schema.Reference{Type: "fake.network", Attribute: "id"},
+			},
+```
+
+**The single rule: your plugin names the attribute, and infrena never guesses it.** Whether a
+subnet's `VpcId` wants the VPC's id or its ARN is knowledge about your API, and it belongs to you. The
+engine's whole part is to read the declaration and rewrite `${network}` into `${network.id}` at
+compile time (`projectRefs`, `internal/compiler/bind.go`); the planner, executor, state and your
+plugin only ever see the two-part reference. An attribute that declares nothing gets the behaviour it
+had before v0.6.0. `${network}` there is a compile error naming the fix, **with no fallback to
+"probably the id"**. Here it is for the fake's `database_url`, which declares nothing:
+
+```
+$ infrena plan dev
+Error: ${db} passes a resource to an attribute that declares no reference
+  at infra.yml:22:5
+
+  `database_url` does not say which of "db"'s attributes it holds, so there is nothing to pick — write ${db.<attribute>} instead. The provider declares that, not infrena.
+
+  Suggested action:
+    Name the attribute you mean, as ${db.<attribute>}.
+Error: configuration is not valid
+```
+
+What a declaration gives a user:
+
+- **`${network}` is sugar, never a replacement.** `${network.id}` keeps working forever, so declaring
+  a reference in a later release breaks no configuration that names the attribute.
+- **Both spellings are type-checked.** Once `network` declares `fake.network`, writing `${app}` or
+  `${app.url}` there is refused before anything runs (`checkReferredType`, `bind.go`):
+
+  ```
+  Error: network refers to fake.network, and "app" is fake.application
+    at infra.yml:15:5
+
+    ${app.id} reaches into a resource of the wrong type.
+
+    Suggested action:
+      Pass a fake.network, or name the attribute you mean on a resource of that type.
+  Error: configuration is not valid
+  ```
+
+  So adding a declaration can turn a configuration that used to compile, one pointing the attribute
+  at a resource of another type, into an error. That is the point, but say so in your release notes.
+- **`explain` prints it:** `network  string  Network this database sits in  (refers to fake.network.id)`.
+- **A module boundary carries no reference in either direction.** A module input declares a type, not
+  a relationship, and an output has no consuming attribute, so `${network}` passed as a module input or
+  published as a module output is refused with the `${network.<attribute>}` fix, whatever your plugin
+  declares (`PLAN.md` §14.3; `refuseWholeResourceInput`/`refuseWholeResourceOutput`, `internal/modules`).
+
+**Declare it only where the attribute holds an identifier.** The fake's `database_url` holds a
+database's `endpoint`, a connection string rather than an identifier, so it declares nothing.
+Declaring it would make `database_url: ${db}` silently mean "the endpoint", and would refuse a
+`database_url` built from anything but a `fake.database`. `References` and `Requirements` are
+different axes. A `Requirement` says "a database needs *some* network to exist" and names no
+attribute; `References` says "*this* attribute holds a network's id". infrena does not derive one from
+the other yet (`PLAN.md` §14.3, "not yet reconciled"), so keep declaring both.
+
+**Refused at load** (`pkg/schema/definition.go`):
+
+- **A dangling `Type` or `Attribute`:** `fake.database: attribute "network" refers to fake.network.ident, and fake.network has no attribute "ident"`.
+  `Attribute` must be the target's **canonical** name, never an alias. This is `schema.ValidateAll`,
+  which needs the whole set of definitions. infrena's registry runs it when the CLI loads your plugin
+  (`checkDefinitions`, `internal/registry/registry.go`). **`plugintest.Open` does not:** the host
+  adapter runs only each definition's own `Validate` (`internal/pluginhost/adapter.go:72`). So call
+  `schema.ValidateAll(definitions())` in a unit test, as `internal/fake/definitions_test.go` does.
+- **A `References` nested inside `Fields`.** Only a top-level attribute's declaration is ever
+  consulted, so a nested one would do nothing, and is refused rather than ignored.
+
+### `Fields`: a map attribute's known keys
+
+**infrena:** (v0.6.0, `PLAN.md` §14.3, `pkg/schema/attribute.go:91-104`) A `KindMap` attribute may
+declare `Fields map[string]schema.Attribute`, the keys the provider knows. Where it does, a path into
+the map naming a key that isn't declared, such as `${lb.health_check.intervall}`, is a compile error
+listing the keys that exist, instead of a clean plan that fails halfway through `apply`.
+
+- **Nil means open, and that is a first-class answer.** Tags and labels take any key and always will,
+  so declaring `Fields` for them would be a schema claiming to know a shape it doesn't. An open map is
+  checked exactly as before: not at all, until apply. The fake's `tags` stays open for that reason, and
+  so does every fake attribute: none is a map whose keys the plugin knows.
+- **Declare it where the API fixes the keys**, for example a settings block with a documented set of
+  fields. Each nested `Attribute` needs a `Kind`, and may itself declare `Fields` if it is a map.
+- **`Fields` on an attribute whose `Kind` isn't `KindMap` is refused at load**, at every nesting
+  level: `attribute "x" declares Fields but its Kind is not a map; Fields describes a map's known keys`.
+- **`explain` lists a declared map's known keys.**
+
+### Declaring either needs infrena v0.6.0 and protocol 3
+
+`References` and `Fields` are new keys in the schema payload (`pkg/schema/wire.go:37-44`), and an
+attribute decodes leniently. A host older than v0.6.0 would silently drop both, and your `${vpc}`
+would fail as "declares no reference" with nothing explaining why. That is why v0.6.0 raised
+`pluginproto.Version` to 3 (`pkg/pluginproto/proto.go:43-51`): an older host refuses a plugin
+announcing 3 by name instead. A plugin that declares either must require infrena v0.6.0, write
+`protocol: [3]` in `plugin.yaml`, and set `infrena: ">= 0.6.0"`
+([section 12](#12-the-manifest-pluginyaml)). This repository does all three. A plugin that declares
+neither and stays on an older SDK keeps announcing 2 or 1, which v0.6.0 still accepts
+(`Supported = {3, 2, 1}`).
 
 ### The `Update` contract
 
@@ -669,7 +792,7 @@ func (p *Provider) ClassifyError(err error) provider.Retryability {
 `ClassifyError` inside your process, as it writes the failed response, and sends the answer with the
 message (`pkg/pluginsdk/serve.go:287-293`). The host rebuilds a typed error carrying that answer, and
 its own `ClassifyError` just reads it back (`internal/pluginhost/client.go:211-216`,
-`adapter.go:142-147`). `internal/fake/protocol_test.go:106-130` checks that a classification
+`adapter.go:142-147`). `internal/fake/protocol_test.go:141-165` checks that a classification
 survives the trip.
 
 Two things follow from how the SDK does this:
@@ -832,7 +955,7 @@ because a package under `internal/` can't be imported by another module (`plugin
 sensitive values or carries bookkeeping forward. It shouldn't do either, so that test would pin
 behaviour you are supposed to leave out. Assert instead, through `plugintest`, that the *host* does
 it. The fake has both halves: `internal/fake/provider_test.go:284-299` asserts the plugin leaves
-bookkeeping **unset**, and `internal/fake/protocol_test.go:54-82` and `:86-104` assert the host
+bookkeeping **unset**, and `internal/fake/protocol_test.go:89-117` and `:121-139` assert the host
 re-attaches bookkeeping and redacts a discovered password.
 
 ### Layer 3: the binary, once, behind a build tag
@@ -1088,19 +1211,24 @@ to install, and they can act on the complaint (`loader.go:136-140`).
 
 What must stay compatible between infrena and your plugin is the **wire protocol**, not the Go types
 you compiled against (`pkg/pluginproto/proto.go:9-12`). The host accepts a *set* of protocol versions
-(`proto.go:25-55`). A plugin built against an older SDK keeps working as long as its protocol version
+(`proto.go:25-59`). A plugin built against an older SDK keeps working as long as its protocol version
 is in that set, so you don't have to rebuild for every infrena release (`PLAN.md` §61.3). Under
 infrena's own versioning rules, a minor release may add a protocol version but must keep the previous
 one, and only a major release may drop one (`PLAN.md` §61.1). If the set no longer includes your
 version, the user gets an error naming your plugin, its path, both sides' versions, and which one to
 upgrade (`internal/pluginhost/errors.go:23-46`).
 
-**infrena:** v0.3.0 raised `pluginproto.Version` to 2 and made `Supported` `{2, 1}` (`proto.go:25-55`).
+**infrena:** v0.3.0 raised `pluginproto.Version` to 2 and made `Supported` `{2, 1}` (`proto.go:25-59`).
 The messages kept their shape. The schema payload gained `optional` and `aliases`, and because an
 attribute decodes leniently, an older host would silently drop both, so a plugin relying on them must
 be refused by that host rather than half-work. Every plugin built against v0.3.0 announces 2, whether
 or not it uses either field; one built against v0.2.0 still announces 1 and still loads. That bump is
 what changes your manifest's `protocol` ([section 12](#protocol-what-this-releases-binary-speaks)).
+
+**infrena:** v0.6.0 raised `pluginproto.Version` to 3 and made `Supported` `{3, 2, 1}`
+(`proto.go:43-59`), for the same reason: the schema payload gained `references` and `fields`
+([section 3](#declaring-either-needs-infrena-v060-and-protocol-3)). Every plugin built against v0.6.0
+announces 3.
 
 Because of that, `pkg/pluginproto` "changes additively, and any removal bumps `protocol`" (`PLAN.md`
 §31.1, "Handshake and version") — a new optional field on the wire is not a protocol bump. `pkg/value`
@@ -1121,7 +1249,7 @@ at a checkout of infrena next to your plugin, for local work:
 
 ```
 // go.mod
-require github.com/infrena/infrena v0.5.0
+require github.com/infrena/infrena v0.6.0
 
 replace github.com/infrena/infrena => ../infrena
 ```
@@ -1245,16 +1373,17 @@ version: 0.2.0
 # pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
 # and a later host protocol bump forces no re-release: the host keeps accepting older versions.
-protocol: [2]
+protocol: [3]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrena without a cloud account.
-# The oldest infrena release this plugin is tested with: 0.5.0, the release go.mod requires, so the
-# floor is the release CI builds and runs the e2e suite with. 0.5.0 changed the configuration
-# grammar (a variable is ${var.x}), and this repository's documented examples use it. Releases
-# before 0.4.0 are infrata, with a different module path, CLI and plugin binary name.
+# The oldest infrena release this plugin is tested with: 0.6.0, the release go.mod requires, so the
+# floor is the release CI builds and runs the e2e suite with. 0.6.0 added provider-declared
+# references (fake.database's network accepts ${network}) and protocol 3, which is what this binary
+# speaks; 0.5.0 changed the configuration grammar (a variable is ${var.x}). Releases before 0.4.0
+# are infrata, with a different module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
-infrena: ">= 0.5.0"
+infrena: ">= 0.6.0"
 source: https://github.com/infrena/infrena-provider-fake
 ```
 
@@ -1316,7 +1445,8 @@ Three consequences follow:
    release keeps loading and keeps describing itself correctly.
 3. **Your next release changes `protocol` in the same commit as its infrena `require` bump**, because
    the rebuilt binary announces the new number. This repository went to `protocol: [2]` in the commit
-   that moved `go.mod` to `github.com/infrata/infrata v0.3.0`, as the module was named then.
+   that moved `go.mod` to `github.com/infrata/infrata v0.3.0`, as the module was named then, and to
+   `protocol: [3]` in the commit that required `github.com/infrena/infrena v0.6.0`.
 
 Two checks enforce the third here. `internal/fake/manifest_test.go` requires `protocol` to be exactly
 `[pluginproto.Version]`, and `scripts/release-check` refuses a manifest whose `protocol` is not
@@ -1375,9 +1505,9 @@ requires, must satisfy the floor outright, so a floor above the tested release f
 reporting a suffix is a development build, and gets `AllowsInfrena`'s own rule rather than a second
 copy of it: `0.0.0-dev` is exempt, and a pseudo-version compares as its `MAJOR.MINOR.PATCH`, so it
 passes exactly when it was built after a release the floor admits (`0.4.1-0.<time>-<hash>` passes
-`>= 0.4.0`; a checkout from before `v0.4.0` fails). This repository's `infrena: ">= 0.5.0"` is the
-release `go.mod` requires, and the first whose grammar its examples parse under.
-`internal/fake/manifest_test.go` separately checks the floor refuses `0.4.x` and admits `0.5.0`.
+`>= 0.4.0`; a checkout from before `v0.4.0` fails). This repository's `infrena: ">= 0.6.0"` is the
+release `go.mod` requires, and the first that understands the `References` its schema declares.
+`internal/fake/manifest_test.go` separately checks the floor refuses `0.5.x` and admits `0.6.0`.
 
 ### What it deliberately leaves out
 
@@ -1961,6 +2091,16 @@ attribute:
   Likewise, when `DescribeVpcs` returns no tags, leave
   `tags` out of the state `Read` returns. Returning it as `{}` makes every untagged VPC plan
   `tags: {} -> (absent)`.
+- **Recommendation: declare `References` on every attribute that holds another resource's ID or
+  ARN, naming which one.** `aws.subnet`'s `vpc_id` declares `&schema.Reference{Type: "aws.vpc",
+  Attribute: "id"}`. A user then writes `vpc_id: ${vpc}` and cannot hand it an ARN by mistake, which
+  is the complaint `PLAN.md` §14.3 was written from. An attribute that wants an ARN declares
+  `Attribute: "arn"`, on a target type that has an `arn` attribute (the sketch's `aws.vpc` has none,
+  so a reference to `aws.vpc.arn` would refuse to load). `tags` stays open, with no `Fields`: AWS tags
+  take any key. §14.3 defines a reference only for a single-valued, top-level attribute. It says nothing
+  about a list of IDs, such as an RDS subnet group's `subnet_ids`, and a `References` nested in
+  `Fields` is refused, so model a list of IDs with explicit `${subnet_a.id}` references until infrena
+  says otherwise.
 
 #### Requirements are where a real cloud leans hardest
 

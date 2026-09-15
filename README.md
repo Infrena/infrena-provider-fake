@@ -13,13 +13,14 @@ no network and no credentials.
 
 > **Syntax.** Configuration examples here use infrena v0.5.0's grammar, where a variable is written
 > `${var.x}`; projects written for v0.4.0 and earlier wrote `${x}`. A resource attribute such as
-> `${network.id}` is spelled the same in both.
+> `${network.id}` is spelled the same in both. Since v0.6.0, `fake.database`'s `network` also
+> accepts the network whole, `${network}` ([Resource types](#fakedatabase)).
 
 ## Build and install
 
 A local build uses a sibling checkout of infrena: infrena stays private until it is feature
 complete, so fetching the module needs credentials a casual build shouldn't. `go.mod` requires
-infrena v0.5.0, and CI builds against exactly that tag.
+infrena v0.6.0, and CI builds against exactly that tag.
 Lay the two repositories out side by side:
 
 ```
@@ -29,7 +30,7 @@ some-directory/
 ```
 
 `go.mod`'s `replace github.com/infrena/infrena => ../infrena` assumes exactly that layout. It builds
-whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.5.0`) when
+whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.6.0`) when
 you want a local result that means what CI's does. Then:
 
 ```bash
@@ -308,11 +309,31 @@ Requires a `fake.network`.
 | `engine` | string | Required, replaces on change |
 | `size` | int | Default: `10` |
 | `password` | string | Sensitive |
-| `network` | string | |
-| `tags` | map | |
+| `network` | string | Refers to `fake.network`'s `id`: accepts `${network}` as well as `${network.id}` |
+| `tags` | map | Open: any keys |
 | `endpoint` | string | Computed |
 
 Computed `endpoint` is `db-N.db.fake`, e.g. `db-2.db.fake`.
+
+`network` declares that it holds a `fake.network`'s `id` (infrena v0.6.0, `PLAN.md` §14.3), so
+`network: ${network}` passes the network whole and infrena fills in `.id`. The declaration also
+type-checks both spellings: in the [Try it](#try-it) project, `network: ${app}` or
+`network: ${app.url}` is refused before anything runs.
+
+```
+$ infrena plan dev
+Error: network refers to fake.network, and "app" is fake.application
+  at infra.yml:15:5
+
+  ${app.id} reaches into a resource of the wrong type.
+
+  Suggested action:
+    Pass a fake.network, or name the attribute you mean on a resource of that type.
+Error: configuration is not valid
+```
+
+No other attribute declares a reference, so a bare `${db}` anywhere else is an error naming the
+`${db.<attribute>}` fix; infrena never guesses the id.
 
 ### `fake.application`
 
@@ -322,7 +343,7 @@ Requires a `fake.database`.
 | --- | --- | --- |
 | `image` | string | Required |
 | `replicas` | int | Default: `1` |
-| `database_url` | string | |
+| `database_url` | string | No reference: a connection string, so write `${db.endpoint}` |
 | `url` | string | Computed |
 
 Computed `url` is `https://app-N.fake`, e.g. `https://app-3.fake`.
@@ -496,16 +517,17 @@ version: 0.2.0
 # pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
 # and a later host protocol bump forces no re-release: the host keeps accepting older versions.
-protocol: [2]
+protocol: [3]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrena without a cloud account.
-# The oldest infrena release this plugin is tested with: 0.5.0, the release go.mod requires, so the
-# floor is the release CI builds and runs the e2e suite with. 0.5.0 changed the configuration
-# grammar (a variable is ${var.x}), and this repository's documented examples use it. Releases
-# before 0.4.0 are infrata, with a different module path, CLI and plugin binary name.
+# The oldest infrena release this plugin is tested with: 0.6.0, the release go.mod requires, so the
+# floor is the release CI builds and runs the e2e suite with. 0.6.0 added provider-declared
+# references (fake.database's network accepts ${network}) and protocol 3, which is what this binary
+# speaks; 0.5.0 changed the configuration grammar (a variable is ${var.x}). Releases before 0.4.0
+# are infrata, with a different module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
-infrena: ">= 0.5.0"
+infrena: ">= 0.6.0"
 source: https://github.com/infrena/infrena-provider-fake
 ```
 
@@ -513,17 +535,19 @@ source: https://github.com/infrena/infrena-provider-fake
 a version 2 manifest, and `infrena:` in a version 1 one, so the key and the format version move
 together.
 
-`infrena: ">= 0.5.0"` names the release `go.mod` requires, so it is also the one CI tests this
-plugin against, and the first whose grammar this README's examples parse under. Today it is documentation and an input to
+`infrena: ">= 0.6.0"` names the release `go.mod` requires, so it is also the one CI tests this
+plugin against, and the first that understands the reference `fake.database`'s `network` declares
+(an older host would drop it, and `${network}` would not compile). Today it is documentation and an input to
 the compliance suite, not a runtime check: infrena will refuse a plugin whose floor the running build
 fails at `infrena plugins install`, which is not built yet.
 
-`protocol: [2]` is the plugin protocol this release's binary speaks. A binary built with infrena's
+`protocol: [3]` is the plugin protocol this release's binary speaks. A binary built with infrena's
 SDK speaks exactly one: the `pluginproto.Version` of the infrena `go.mod` requires, which v0.3.0
-(released as infrata) raised to 2. So `protocol:` changes in the same commit as that `require`, and
-both `internal/fake/manifest_test.go` and `scripts/release-check` refuse a mismatch. Once released,
-the value never goes stale — v0.1.1's binary announces protocol 1 for ever, and infrata v0.3.0 still
-accepts 1 — so a later infrena protocol bump does not force a re-release.
+(released as infrata) raised to 2 and v0.6.0 raised to 3. So `protocol:` changes in the same commit
+as that `require`, and both `internal/fake/manifest_test.go` and `scripts/release-check` refuse a
+mismatch. Once released, the value never goes stale — v0.1.1's binary announces protocol 1 for ever,
+v0.2.0's announces 2, and infrena v0.6.0 still accepts both — so a later infrena protocol bump does
+not force a re-release.
 
 infrena reads this file at a release tag, never at the tip of the default branch — the default
 branch's `plugin.yaml` describes code that has not shipped yet. `internal/fake.Version` is
@@ -549,7 +573,7 @@ will not be refused:
 
 ```
 $ scripts/release-check v0.2.0
-release-check: tag, plugin.yaml and binary all say 0.2.0, and speak protocol [2]
+release-check: tag, plugin.yaml and binary all say 0.2.0, and speak protocol [3]
 $ echo $?
 0
 ```
