@@ -512,7 +512,7 @@ committed today:
 # `infrena:`. Releases up to v0.2.0 were tagged with `manifest: 1` and stay readable as they are.
 manifest: 2
 name: fake
-version: 0.2.0
+version: 0.3.0
 # The protocol THIS RELEASE'S binary speaks: for an SDK-built plugin, exactly one version, the
 # pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
@@ -572,8 +572,8 @@ which:
 will not be refused:
 
 ```
-$ scripts/release-check v0.2.0
-release-check: tag, plugin.yaml and binary all say 0.2.0, and speak protocol [3]
+$ scripts/release-check v0.3.0
+release-check: tag, plugin.yaml and binary all say 0.3.0, and speak protocol [3]
 $ echo $?
 0
 ```
