@@ -20,7 +20,7 @@ no network and no credentials.
 
 A local build uses a sibling checkout of infrena: infrena stays private until it is feature
 complete, so fetching the module needs credentials a casual build shouldn't. `go.mod` requires
-infrena v0.6.1, and CI builds against exactly that tag.
+infrena v0.7.0, and CI builds against exactly that tag.
 Lay the two repositories out side by side:
 
 ```
@@ -30,7 +30,7 @@ some-directory/
 ```
 
 `go.mod`'s `replace github.com/infrena/infrena => ../infrena` assumes exactly that layout. It builds
-whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.6.1`) when
+whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.7.0`) when
 you want a local result that means what CI's does. Then:
 
 ```bash
@@ -112,25 +112,63 @@ $ echo $?
 `plan` exits 2 when it finds changes to make, and 0 when the configuration already matches what the
 fake cloud holds — that is how a CI job distinguishes "nothing to do" from "review this".
 
+`apply` without `--auto-approve` asks before it changes anything. When nobody can answer — stdin is
+at end of input, as in a pipeline, or `--output` is set so nothing is reading stdout — it exits 77
+without taking a lock or touching the cloud:
+
+```
+$ infrena apply dev < /dev/null
+... (the same plan as above)
+
+Do you want to perform these actions?
+  infra will perform the actions described above.
+  Only 'yes' will be accepted to approve.
+
+  Enter a value: Error: these changes need approval and this run cannot ask for it: with --output set nothing is reading stdout, and with stdin at end of input nothing is there to type.
+Pass --auto-approve to approve without being asked, or review a saved plan (`infrena plan --output FILE`) and apply it with --plan
+$ echo $?
+77
+```
+
+`destroy` behaves the same way. `--auto-approve`, or applying a saved plan with `--plan`, never
+exits 77.
+
 ```
 $ infrena apply dev --auto-approve
-...
+... (the same plan as above)
+Creating network...
+Creating network... done (0.0s)
+Creating db...
+Creating db... done (0.0s)
+Creating app...
+Creating app... done (0.0s)
 Apply complete: 3 applied, 0 failed, 0 skipped.
 
 Applied:
-  + network
-      cidr: "10.0.0.0/16"
-      id: "net-1"
+  + app
+      database_url: "db-2.db.fake"
+      image: "nginx:1.27"
+      replicas: 1
+      url: "https://app-3.fake"
   ... (2 more resources, same shape as the plan above — trimmed here for length)
 $ echo $?
 2
 ```
 
 `apply` also exits 2 on a successful run that changed something; a failed apply exits 1 (see
-[Injecting failures and latency](#injecting-failures-and-latency)).
+[Injecting failures and latency](#injecting-failures-and-latency)). So the exit codes are: 0 success
+with no changes, 1 error, 2 success with changes, 77 changes that need approval this run cannot get.
+
+Progress lines such as `Creating network... done` go to stdout, in the order operations finish, so
+their order can differ from run to run. With `--output <file>`, every command writes only that file,
+a newline-delimited JSON report, and prints nothing to stdout; `plan --output` carries the plan
+itself on that report's `{"type":"plan"}` line, which `apply --plan` reads back.
 
 ```
 $ infrena plan dev
+Reading network... done
+Reading db... done
+Reading app... done
 Plan for project "demo", environment "dev":
 
 No changes. Configuration matches the observed state.
@@ -203,6 +241,9 @@ from `"postgres"` to `"mysql"` and save, then plan again:
 
 ```
 $ infrena plan dev
+Reading network... done
+Reading app... done
+Reading db... done
 Plan for project "demo", environment "dev":
 
   ~ fake.application.app
@@ -214,46 +255,76 @@ Plan for project "demo", environment "dev":
       engine: "mysql" -> "postgres"
 
 Plan: 0 to create, 1 to update, 1 to replace, 0 to destroy, 0 to forget.
+$ echo $?
+2
 ```
 
 `engine` is `ForceNew` (see the tables below), so the hand-edit is reported as a forced replacement,
 not a plain update — and the dependent `app` is reported too, because replacing `db` changes the
 `database_url` it computes.
 
+Put `engine` back to `"postgres"` and the plan is clean again.
+
 A resource you add by hand with no `address` — the way `net-77` might appear in this file if someone
 provisioned it outside infrena — is infrastructure infrena did not create. That is what `infrena
-discover` and `infrena import` are for. Add `net-77` to `.infra/fake-cloud.json` by hand:
+discover` and `infrena import` are for. Add a network and a database in it to
+`.infra/fake-cloud.json` by hand:
 
 ```json
 "net-77": {
   "type": "fake.network",
   "attributes": {"cidr": "172.16.0.0/12", "id": "net-77"}
+},
+"db-78": {
+  "type": "fake.database",
+  "attributes": {"endpoint": "db-78.db.fake", "engine": "postgres", "network": "net-77", "size": 10}
 }
 ```
 
 ```
 $ infrena discover
-TYPE              ID      NAME
-fake.application  app-3   app-3
-fake.database     db-2    db-2
-fake.network      net-1   net-1
-fake.network      net-77  net-77
+TYPE           ID      NAME
+fake.database  db-78   database-db-78
+fake.network   net-77  network-net-77
 
-4 resources found. Nothing has been imported.
+5 resources found: 2 unmanaged, 3 already managed (--all to show them).
+Nothing has been imported.
 Run `infrena import <environment> --generate` to adopt them.
 $ echo $?
 0
 ```
 
-`discover` lists every resource the cloud file holds, managed or not — telling the two apart is
-`import`'s job. `net-77` is the one this walkthrough added by hand, so it is the one to import:
+`discover` leaves out what this project already manages, in any environment, and says how many it
+left out. `--all` shows everything, with a `STATUS` column:
 
 ```
-$ infrena import dev fake.network.net-77 --generate
-Wrote discovered/networks.yml
-Imported net-77 as net-77
+$ infrena discover --all
+TYPE              ID      NAME               STATUS
+fake.application  app-3   application-app-3  managed (dev)
+fake.database     db-2    database-db-2      managed (dev)
+fake.database     db-78   database-db-78     unmanaged
+fake.network      net-1   network-net-1      managed (dev)
+fake.network      net-77  network-net-77     unmanaged
 
-1 resource imported into "dev".
+5 resources found: 2 unmanaged, 3 already managed.
+Nothing has been imported.
+Run `infrena import <environment> --generate` to adopt them.
+$ echo $?
+0
+```
+
+`NAME` is what `import` will call each resource: the provider ID, prefixed with the last part of its
+type. `--tag key=value`, `--exclude-type <type>` and `--name <glob>` narrow the list, and `import`
+takes the same three. Import the two added by hand:
+
+```
+$ infrena import dev fake.network.net-77 fake.database.db-78 --generate
+Wrote discovered/databases.yml
+Wrote discovered/networks.yml
+Imported net-77 as network-net-77
+Imported db-78 as database-db-78
+
+2 resources imported into "dev".
 $ echo $?
 0
 ```
@@ -262,19 +333,39 @@ $ echo $?
 next apply:
 
 ```
+$ cat discovered/databases.yml
+# Generated by `infrena import`. Edit freely — this file is loaded like any
+# other, and is the configuration that keeps imported resources from being
+# destroyed on the next apply.
+resources:
+  # imported from db-78
+  database-db-78:
+    type: fake.database
+    engine: postgres
+    network: ${network-net-77}
 $ cat discovered/networks.yml
 # Generated by `infrena import`. Edit freely — this file is loaded like any
 # other, and is the configuration that keeps imported resources from being
 # destroyed on the next apply.
 resources:
   # imported from net-77
-  net-77:
+  network-net-77:
     type: fake.network
     cidr: 172.16.0.0/12
 ```
 
+The database's `network` is written as `${network-net-77}`, not the literal `net-77`: `network`
+declares that it holds a `fake.network`'s `id` (see [`fake.database`](#fakedatabase)), and that
+network is in the same import. A network outside the import would stay a literal. Import also
+records the dependency this reference implies, so state matches the configuration from the start.
+
 ```
 $ infrena plan dev
+Reading network-net-77... done
+Reading db... done
+Reading database-db-78... done
+Reading app... done
+Reading network... done
 Plan for project "demo", environment "dev":
 
 No changes. Configuration matches the observed state.
@@ -284,8 +375,16 @@ $ echo $?
 0
 ```
 
-The plan that follows is clean: `net-77` is now tracked under the configuration `import --generate`
-wrote, with nothing left to create, update, or destroy.
+The plan that follows is clean: both resources are now tracked under the configuration
+`import --generate` wrote, with nothing left to create, update, or destroy. Run `import` again with
+no selector, and everything discovery finds is already managed:
+
+```
+$ infrena import dev
+Nothing to import.
+$ echo $?
+0
+```
 
 ## Resource types
 
@@ -517,17 +616,18 @@ version: 0.3.0
 # pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
 # and a later host protocol bump forces no re-release: the host keeps accepting older versions.
-protocol: [3]
+protocol: [4]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrena without a cloud account.
-# The oldest infrena release this plugin is tested with: 0.6.0, the release go.mod requires, so the
-# floor is the release CI builds and runs the e2e suite with. 0.6.0 added provider-declared
-# references (fake.database's network accepts ${network}) and protocol 3, which is what this binary
-# speaks; 0.5.0 changed the configuration grammar (a variable is ${var.x}). Releases before 0.4.0
-# are infrata, with a different module path, CLI and plugin binary name.
+# The oldest infrena release this plugin is tested with: 0.7.0, the release go.mod requires, so the
+# floor is the release CI builds and runs the e2e suite with. 0.7.0 raised the plugin protocol to 4,
+# which is what this binary speaks, so an older host refuses it at the handshake; 0.6.0 added
+# provider-declared references (fake.database's network accepts ${network}); 0.5.0 changed the
+# configuration grammar (a variable is ${var.x}). Releases before 0.4.0 are infrata, with a
+# different module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
-infrena: ">= 0.6.0"
+infrena: ">= 0.7.0"
 source: https://github.com/infrena/infrena-provider-fake
 ```
 
@@ -535,19 +635,20 @@ source: https://github.com/infrena/infrena-provider-fake
 a version 2 manifest, and `infrena:` in a version 1 one, so the key and the format version move
 together.
 
-`infrena: ">= 0.6.0"` names the release `go.mod` requires, so it is also the one CI tests this
-plugin against, and the first that understands the reference `fake.database`'s `network` declares
-(an older host would drop it, and `${network}` would not compile). Today it is documentation and an input to
+`infrena: ">= 0.7.0"` names the release `go.mod` requires, so it is also the one CI tests this
+plugin against, and the first that speaks the protocol this binary announces: a v0.6.x host lists
+protocols up to 3 and refuses it at the handshake. Today the floor is documentation and an input to
 the compliance suite, not a runtime check: infrena will refuse a plugin whose floor the running build
 fails at `infrena plugins install`, which is not built yet.
 
-`protocol: [3]` is the plugin protocol this release's binary speaks. A binary built with infrena's
+`protocol: [4]` is the plugin protocol this release's binary speaks. A binary built with infrena's
 SDK speaks exactly one: the `pluginproto.Version` of the infrena `go.mod` requires, which v0.3.0
-(released as infrata) raised to 2 and v0.6.0 raised to 3. So `protocol:` changes in the same commit
-as that `require`, and both `internal/fake/manifest_test.go` and `scripts/release-check` refuse a
-mismatch. Once released, the value never goes stale — v0.1.1's binary announces protocol 1 for ever,
-v0.2.0's announces 2, and infrena v0.6.0 still accepts both — so a later infrena protocol bump does
-not force a re-release.
+(released as infrata) raised to 2, v0.6.0 raised to 3 and v0.7.0 raised to 4 (a discovered resource
+may be flagged as created by the cloud itself, which this plugin never does). So `protocol:` changes
+in the same commit as that `require`, and both `internal/fake/manifest_test.go` and
+`scripts/release-check` refuse a mismatch. Once released, the value never goes stale — v0.1.1's
+binary announces protocol 1 for ever, v0.2.0's announces 2, v0.3.0's announces 3, and infrena v0.7.0
+still accepts all three — so a later infrena protocol bump does not force a re-release.
 
 infrena reads this file at a release tag, never at the tip of the default branch — the default
 branch's `plugin.yaml` describes code that has not shipped yet. `internal/fake.Version` is
@@ -573,7 +674,7 @@ will not be refused:
 
 ```
 $ scripts/release-check v0.3.0
-release-check: tag, plugin.yaml and binary all say 0.3.0, and speak protocol [3]
+release-check: tag, plugin.yaml and binary all say 0.3.0, and speak protocol [4]
 $ echo $?
 0
 ```

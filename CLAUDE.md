@@ -52,8 +52,18 @@ CI uses the `INFRENA_CHECKOUT_TOKEN` secret; the old `INFRATA_CHECKOUT_TOKEN` wa
 the rename it proved the path (ci.yml's first GitHub run 34797363934 green on both jobs; the release
 path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
 
-**Requires infrena v0.6.1 (`f6c59af`),** with `infrena: ">= 0.6.0"`, `protocol: [3]` and go.sum
-carrying the v0.6.1 hashes. v0.6.0 raised `pluginproto.Version` to 3 and added provider-declared
+**Requires infrena v0.7.0 (`a6b45c6`),** with `infrena: ">= 0.7.0"`, `protocol: [4]` and go.sum
+carrying the v0.7.0 hashes (plugin `version:` still 0.3.0; the next release is 0.4.0). v0.7.0 raised
+`pluginproto.Version` to 4 (`Supported = {4, 3, 2, 1}`) for `provider.DiscoveredResource.SystemOwned`
+and `SystemOwnedReason`, which this plugin deliberately never sets: its cloud creates nothing for
+itself. v0.7.0 also: `report.Version = 2`, so `plan --output` writes the NDJSON report stream with the
+artifact on a `{"type":"plan","plan":…}` line (the e2e `planArtifact` helper reads that, and still
+accepts a bare artifact because plans saved by older releases exist and `apply --plan` reads both);
+`--output` silences stdout for every command; exit 77 when `apply`/`destroy` need approval nobody can
+give; discovered names are type-prefixed (`network-net-77`); `import --generate` emits
+`${network-net-77}` from `References` and records the `depends_on` edges; `discover`/`import` hide
+what any environment manages (`discover --all`, `--tag`, `--exclude-type`, `--name`); `init`
+scaffolds `./infrena`. The README walkthrough was regenerated against a v0.7.0 build. v0.6.0 raised `pluginproto.Version` to 3 and added provider-declared
 references (its `PLAN.md` §14.3): `schema.Attribute.References{Type, Attribute}` lets `${res}` be
 filled in as `${res.<attribute>}`, and `Fields` declares a map's known keys (nil = open).
 `fake.database`'s `network` declares `References{fake.network, id}`, so `network: ${network}` works
@@ -93,12 +103,11 @@ compiles against `../infrena` through `go.mod`'s `replace`, so pointing `INFRENA
 checkout pairs a host built from one infrena with an SDK compiled against another. CI's tag job avoids
 that: it drops the replace and builds the host from the same tag.)
 
-Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.6.0"` is
-the minor release `go.mod`'s require (v0.6.1) belongs to — v0.6.1 moved a host-side check and made
-`schema.ValidateAll` (compiled into this binary) refuse a nil instead of panicking, which changes no
-valid input, so a v0.6.0 host runs this binary identically and the floor stays — and is not enforced
-at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.5.x and admits 0.6.0 — and its
-`protocol: [3]` is exactly the `pluginproto.Version`
+Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.7.0"` is
+the release `go.mod` requires, and the first host that speaks protocol 4 (a v0.6.x host refuses this
+binary at the handshake) — and is not enforced
+at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.6.x and admits 0.7.0 — and its
+`protocol: [4]` is exactly the `pluginproto.Version`
 that require's SDK speaks — the amended §31.2 defines `protocol:` as what this release's binary
 speaks, so it changes in the same commit as the require, and `internal/fake/manifest_test.go` and
 `scripts/release-check` both refuse a mismatch), `scripts/release-check`, `scripts/build-release`,

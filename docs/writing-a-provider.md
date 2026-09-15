@@ -59,7 +59,7 @@ func main() { pluginsdk.Main(fake.NewPlugin()) }
 the responses (`pkg/pluginsdk/serve.go:109-147`). Because every request gets a goroutine, one
 process serves every operation infrena runs in parallel. One process also serves every configured
 instance of the plugin: two accounts of your cloud means one process holding two configured
-clients, told apart by a handle (`pkg/pluginproto/proto.go:134-140`).
+clients, told apart by a handle (`pkg/pluginproto/proto.go:146-152`).
 
 ### stdout is the protocol
 
@@ -149,7 +149,7 @@ The split exists to break a cycle. To configure an instance you need its resolve
 Resolving configuration needs variables, variables need a compile, and a compile needs the resource
 schemas. Schemas need no configuration: a server type is described the same way whichever account
 it would be created in. So infrena asks for schemas first, and configures instances later
-(`pkg/provider/provider.go:79-90`).
+(`pkg/provider/provider.go:99-110`).
 
 In the host, both interfaces are wrapped by an adapter, `internal/pluginhost/adapter.go`. It sends
 your methods only what they need, and then **rebuilds** your answer under its own rules before
@@ -160,14 +160,14 @@ says what the host does to the result.
 | --- | --- | --- |
 | `Plugin.Name()` | nothing | Must match the `plugin:` name that selected the binary. A mismatch is refused with a message naming both (`client.go:98-106`, `errors.go:55-69`). Every resource type must also be prefixed `<name>.` (`adapter.go:79-85`). |
 | `Plugin.Definitions()` | nothing | Validated when the plugin loads (see [section 9](#9-what-the-host-enforces-so-you-dont)). Any failure refuses the whole plugin. |
-| `Plugin.New(cfg)` | instance name, that instance's resolved configuration, project directory (`pkg/pluginproto/proto.go:128-132`) | An error is reported as "provider instance … could not be configured", pointing at the `providers:` entry (`internal/providers/prepare.go:302-309`). |
-| `Version()` (optional) | nothing | Sent in the handshake. A plugin that doesn't implement it reports `0.0.0` (`serve.go:343-348`). |
+| `Plugin.New(cfg)` | instance name, that instance's resolved configuration, project directory (`pkg/pluginproto/proto.go:140-144`) | An error is reported as "provider instance … could not be configured", pointing at the `providers:` entry (`internal/providers/prepare.go:302-309`). |
+| `Version()` (optional) | nothing | Sent in the handshake. A plugin that doesn't implement it reports `0.0.0` (`serve.go:344-349`). |
 | `Provider.Read` | type, address, provider ID, attributes | `(nil, nil)` means the resource is gone (`adapter.go:161-163`). Otherwise rebuilt, keeping the bookkeeping from the state infrena already held (`adapter.go:164`). |
 | `Provider.Create` | type, address, desired attributes | `(nil, nil)` becomes an error saying the resource may exist untracked (`adapter.go:173-175`). Otherwise rebuilt, with the address taken from the desired resource (`adapter.go:185-187`). |
 | `Provider.Update` | current and desired, each as type, address, provider ID, attributes | `(nil, nil)` becomes the same error (`adapter.go:200-202`). Otherwise rebuilt from current. |
 | `Provider.Delete` | type, address, provider ID, attributes | Error only; the host rebuilds nothing. Make deleting something already gone succeed, as the fake does (`internal/fake/provider.go:222-236`). Otherwise a resource someone removed by hand turns the next destroy into an error about a resource that no longer exists. |
-| `Provider.Discover` | the types wanted — nothing else. There is no region field on the request ([section 14](#regions-a-default-on-the-instance-overridden-per-resource) explains why) | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). |
-| `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrena's `import` command, never by you (`internal/cli/import.go:166`). |
+| `Provider.Discover` | the types wanted — nothing else. There is no region field on the request ([section 14](#regions-a-default-on-the-instance-overridden-per-resource) explains why) | Any type your plugin doesn't declare is skipped. Declared types have their attributes checked (`adapter.go:219-233`). `SystemOwned` and its reason are carried through unchanged (`adapter.go:260-266`). The CLI then names each result, hides what is already managed, and has `import` skip what is system-owned ([`Discover` and `Import`](#discover-and-import)). |
+| `Provider.Import` | the type, and the cloud's own ID | `(nil, nil)` becomes `no <type> with id "<id>"` (`adapter.go:245-247`). The address is assigned by infrena's `import` command, never by you (`internal/cli/import.go:196`). |
 | `Provider.ClassifyError` | *called in your process* | See [section 5](#5-errors-and-retries). |
 
 ### What is never sent
@@ -175,11 +175,11 @@ says what the host does to the result.
 A resource in infrena's state carries bookkeeping your cloud knows nothing about: its dependencies,
 its lifecycle flags (`prevent_destroy`, `retain`, `ignore_changes`), and its creation and update
 timestamps. **None of it is ever sent to a plugin.** The wire type has no fields for it
-(`pkg/pluginproto/proto.go:151-172`).
+(`pkg/pluginproto/proto.go:163-184`).
 Anything you set on a result is ignored, and the host re-attaches its own copy:
 
 ```go
-// internal/pluginhost/adapter.go:303-318
+// internal/pluginhost/adapter.go:309-324
 	if carry != nil {
 		// The bookkeeping the plugin was never sent and therefore cannot have
 		// lost. Dependencies is the only source of destroy-ordering edges once a
@@ -199,7 +199,7 @@ Anything you set on a result is ignored, and the host re-attaches its own copy:
 ```
 
 The address is the one exception. It *is* sent, because it is a legitimate input: you might put it
-in a tag, a remote name or an error message (`proto.go:161-169`). But the address on a *result* is
+in a tag, a remote name or an error message (`proto.go:173-181`). But the address on a *result* is
 ignored and replaced as above.
 
 So `current` is given to `Read` and `Update` for you to use: the ID to look the resource up, the
@@ -215,7 +215,7 @@ real resource now exists with nothing in state pointing at it, so no later plan 
 it. The host refuses to guess, and says so to the user:
 
 ```go
-// internal/pluginhost/adapter.go:268-274
+// internal/pluginhost/adapter.go:274-280
 	return fmt.Errorf(
 		"%s reported no result from %s of %s, so infrena cannot record what now exists.\n"+
 			"If the operation did take effect, that resource exists and is not in state: "+
@@ -254,6 +254,53 @@ asked for.** `import hetzner.network 42`, where 42 is a server, must be refused.
 records a server as a network, and the next plan proposes replacing real infrastructure to settle
 the mismatch. The fake does this check (`internal/fake/provider.go:294-296`), tested by
 `internal/fake/discover_test.go:171`.
+
+**infrena:** (v0.7.0, `PLAN.md` §25.1, §26.1, §27.2) Three things happen to your answer that you
+should not do yourself:
+
+- **The host names each result, and prefixes the name with its type.** The name is the last segment
+  of the type plus a `Name`/`name` tag or attribute, or failing that the provider ID: the fake's
+  `net-77` imports as `network-net-77` (`internal/discovery/name.go`). The tag map is found through
+  your schema, including its aliases, so declare your tags attribute rather than hoping for `tags`.
+- **What the project already manages is left out**, in any environment, not just the one being
+  imported into. `discover` says how many it hid, and `discover --all` shows them with a `STATUS`
+  column. `import <env>` with no selector adopts only what is new, and prints `Nothing to import.`
+  when nothing is; naming a managed resource explicitly is refused.
+- **`--tag k=v`, `--exclude-type` and `--name <glob>`** narrow both commands, after naming. Your
+  plugin still receives only `Types`.
+
+### `SystemOwned`: resources the cloud created for itself
+
+**infrena:** (v0.7.0, protocol 4, `pkg/provider/provider.go:78-96`) `DiscoveredResource` carries
+`SystemOwned bool` and `SystemOwnedReason string`. Set them on a resource the **cloud** created and
+manages, which no user asked for and which generally must not be adopted.
+
+- **Your plugin declares it; the engine never infers it.** Recognising a default VPC is knowledge
+  about AWS, and the engine holds none. The host adapter carries both fields across untouched
+  (`internal/pluginhost/adapter.go:260-266`).
+- **`discover` still lists the resource**, with your reason in a `NOTE` column. It is a warning, not
+  a veto.
+- **`import` skips it unless a selector names it.** A no-selector `import dev` reports
+  `Skipped <type> <id>: <reason>` on stderr, with a count, and adopts the rest. Naming it as
+  `<type>.<provider id>` adopts it anyway, because a team that genuinely manages its default VPC
+  exists (`withoutSystemOwned` and `reportSkipped`, `internal/cli/import.go`).
+- **Always give a reason.** A flag with no reason prints a generic "the provider reports the cloud
+  owns it", which a user overrides without understanding.
+- **It needs infrena v0.7.0 and protocol 4.** The two fields are new keys on the discover message,
+  which an older host would decode leniently and drop, offering a flagged default VPC for adoption
+  unflagged. So v0.7.0 raised `pluginproto.Version` to 4 (`pkg/pluginproto/proto.go:52-63`), and an
+  older host refuses a plugin built against it by name. Such a plugin announces 4 whether or not it
+  sets the flag, so it writes `protocol: [4]` and `infrena: ">= 0.7.0"`.
+
+The fake sets neither field. Its cloud file holds only what someone put there, so nothing in it was
+created by the cloud.
+
+**Recommendation (AWS):** flag the account's default VPC (`IsDefault` from `DescribeVpcs`), every
+VPC's default security group (`GroupName` `default`), and service-linked roles (IAM path
+`/aws-service-role/`), with reasons such as `the account's default VPC, created by AWS`. Importing a
+default VPC and later destroying it when it leaves configuration is the worst mistake discovery
+makes possible. Don't flag what a user created, however ordinary, and don't use the flag to hide
+resources you would rather not model.
 
 ### `Config`
 
@@ -391,7 +438,7 @@ Mark passwords, tokens and private keys `Sensitive`. Their values are shown as `
 ```
 
 (`README.md:99`.) You do not need to mark individual values you return. The host forces the flag
-from the schema onto every value it receives (`adapter.go:348-353`), and
+from the schema onto every value it receives (`adapter.go:354-359`), and
 `internal/fake/protocol_test.go:121-139` is a test of that: the fake marks nothing, and the host
 still redacts. What the host cannot catch is a **schema** that forgets the flag, because the schema
 is the only thing that knows which attributes are secret.
@@ -603,6 +650,22 @@ plugin declared anything before it. Your first release that adds declarations to
 does, though. Version it as a breaking release, and say in its release notes which attributes gained
 a reference. A reference on a brand-new attribute breaks nothing.
 
+**`import --generate` uses it too** (infrena v0.7.0, `PLAN.md` §27.3), which is another reason to
+declare every reference accurately. When the target is in the same import, the generated file refers
+to it by name rather than pasting its id, and import records the same dependency edge in state, so
+the first plan after an import is clean. From this repository's README:
+
+```yaml
+  database-db-78:
+    type: fake.database
+    engine: postgres
+    network: ${network-net-77}
+```
+
+A target outside the import stays a literal (a reference to a resource no file declares would not
+compile). An attribute that holds an identifier but declares nothing is always a literal, with no
+edge, so the imported resources lose the ordering a hand-written project would have had.
+
 **Refused at load** (`pkg/schema/definition.go`):
 
 - **A dangling `Type` or `Attribute`:** `fake.database: attribute "network" refers to fake.network.ident, and fake.network has no attribute "ident"`.
@@ -610,7 +673,7 @@ a reference. A reference on a brand-new attribute breaks nothing.
   which needs the whole set of definitions. Since infrena v0.6.1 the host adapter runs it on every
   load (`internal/pluginhost/adapter.go`), so it covers a real plugin subprocess and `plugintest.Open`
   alike, and a dangling reference fails your protocol tests. On v0.6.0 only the CLI's registry ran it
-  and `plugintest.Open` did not, which is why this repository requires v0.6.1.
+  and `plugintest.Open` did not, which is why this repository required v0.6.1 before it moved to v0.7.0.
   `internal/fake/definitions_test.go` still calls `schema.ValidateAll` directly. It's cheap, and it
   fails right at the definitions rather than at a protocol load.
 - **A `References` nested inside `Fields`.** Only a top-level attribute's declaration is ever
@@ -638,12 +701,14 @@ listing the keys that exist, instead of a clean plan that fails halfway through 
 `References` and `Fields` are new keys in the schema payload (`pkg/schema/wire.go:37-44`), and an
 attribute decodes leniently. A host older than v0.6.0 would silently drop both, and your `${vpc}`
 would fail as "declares no reference" with nothing explaining why. That is why v0.6.0 raised
-`pluginproto.Version` to 3 (`pkg/pluginproto/proto.go:43-51`): an older host refuses a plugin
+`pluginproto.Version` to 3 (`pkg/pluginproto/proto.go:43-50`): an older host refuses a plugin
 announcing 3 by name instead. A plugin that declares either must require infrena v0.6.0, write
 `protocol: [3]` in `plugin.yaml`, and set `infrena: ">= 0.6.0"`
-([section 12](#12-the-manifest-pluginyaml)). This repository does all three. A plugin that declares
-neither and stays on an older SDK keeps announcing 2 or 1, which v0.6.0 still accepts
-(`Supported = {3, 2, 1}`).
+([section 12](#12-the-manifest-pluginyaml)). This repository did all three at v0.6.x. It now
+requires v0.7.0, whose SDK announces protocol 4 ([`SystemOwned`](#systemowned-resources-the-cloud-created-for-itself)),
+so it writes `protocol: [4]` and `infrena: ">= 0.7.0"`. A plugin that declares neither and stays on
+an older SDK keeps announcing 2 or 1, which v0.6.0 still accepts (`Supported = {3, 2, 1}`), as does
+v0.7.0 (`{4, 3, 2, 1}`).
 
 **If an attribute that declares `References` also has `Aliases`, the floor is infrena v0.6.2.** On
 v0.6.0 and v0.6.1 the compiler looked up the consuming attribute's declaration by the name as
@@ -651,7 +716,8 @@ written, not its canonical name. So a user who wrote the alias, `vpc: ${vpc}`, w
 attribute "declares no reference", while the canonical `vpc_id: ${vpc}` worked. v0.6.2 canonicalises
 first (`internal/compiler/bind.go`). A plugin that combines the two should require v0.6.2 and set
 `infrena: ">= 0.6.2"`. Otherwise its manifest vouches for hosts that give its users that
-misleading error. The fake declares no aliases, so its `>= 0.6.0` stands.
+misleading error. The fake declares no aliases, so `References` alone never pushed its floor past
+`>= 0.6.0`; protocol 4 is what raised it to `>= 0.7.0`.
 
 ### The `Update` contract
 
@@ -685,7 +751,7 @@ remove-everything-not-in-desired loop must keep computed attributes:
 ```
 
 Tested directly by `internal/fake/provider_test.go:249`, and end to end by the e2e subtest "removing
-an optional attribute converges" (`e2e/e2e_test.go:206-214`).
+an optional attribute converges" (`e2e/e2e_test.go:231-240`).
 
 ---
 
@@ -753,7 +819,7 @@ three classes:
 ### What the executor does with each
 
 These are the executor's rules (`internal/executor/retry.go:105-120`), the only place it calls them
-(`internal/executor/apply.go:501`), and the policy the CLI passes in (`internal/cli/apply.go:318-321`):
+(`internal/executor/apply.go:501`), and the policy the CLI passes in (`internal/cli/apply.go:386-389`):
 
 | Operation | `NotSafeToRetry` | `ConditionallyRetryable` | `SafeToRetry` |
 | --- | --- | --- | --- |
@@ -765,8 +831,8 @@ These are the executor's rules (`internal/executor/retry.go:105-120`), the only 
 
 "Retried" means up to three attempts in total. The wait between attempts starts at 500ms, doubles
 each time, is capped at 10s, and is randomized ("full jitter") so failures don't all retry at once
-(`internal/cli/apply.go:318-339`, `retry.go:127-150`). `apply` and `destroy` use the same policy
-(`internal/cli/apply.go:396-411`). When the last attempt fails, the operation fails.
+(`internal/cli/apply.go:386-407`, `retry.go:127-150`). `apply` and `destroy` use the same policy
+(`internal/cli/apply.go:464-479`). When the last attempt fails, the operation fails.
 
 Some consequences worth knowing:
 
@@ -777,7 +843,7 @@ Some consequences worth knowing:
 - **For update, `ConditionallyRetryable` behaves exactly like `SafeToRetry`**, because making a
   resource match the same desired state twice is harmless.
 - **Reads are never retried by the executor.** `retry.go` has a rule for `VerbRead`, but no caller
-  uses it: only create, update and delete go through the retry loop (`apply.go:559-571`). Discovery
+  uses it: only create, update and delete go through the retry loop (`apply.go:627-639`). Discovery
   and import don't go through it either. If a transient read failure should be retried, retry it
   inside your plugin.
 - A classification value outside the three is never retried, for any operation (`retry.go:116-118`).
@@ -788,7 +854,7 @@ cloud. The retry rules belong to infrena, and a later version may treat the clas
 ### Why `NotSafeToRetry` is the default
 
 It is the zero value of `provider.Retryability` (`pkg/provider/provider.go:57`). The protocol treats
-a missing classification as `NotSafeToRetry` (`pkg/pluginproto/proto.go:115-117`). The two ways to get
+a missing classification as `NotSafeToRetry` (`pkg/pluginproto/proto.go:127-129`). The two ways to get
 this wrong are not equally bad. Classify too cautiously, and a user re-runs `apply` after a transient
 failure. Classify too permissively, and a retried create produces a duplicate resource that nothing
 tracks. So return `NotSafeToRetry` for any error you don't specifically recognise:
@@ -808,7 +874,7 @@ func (p *Provider) ClassifyError(err error) provider.Retryability {
 
 `ClassifyError` takes an `error`, and a Go `error` can't be sent over a pipe. So the SDK calls your
 `ClassifyError` inside your process, as it writes the failed response, and sends the answer with the
-message (`pkg/pluginsdk/serve.go:287-293`). The host rebuilds a typed error carrying that answer, and
+message (`pkg/pluginsdk/serve.go:288-294`). The host rebuilds a typed error carrying that answer, and
 its own `ClassifyError` just reads it back (`internal/pluginhost/client.go:211-216`,
 `adapter.go:142-147`). `internal/fake/protocol_test.go:141-165` checks that a classification
 survives the trip.
@@ -816,10 +882,10 @@ survives the trip.
 Two things follow from how the SDK does this:
 
 - **Make `ClassifyError` a pure function of the error.** The SDK asks *any one* of your configured
-  instances to classify, not necessarily the one that failed (`serve.go:313-320`). Don't let the
+  instances to classify, not necessarily the one that failed (`serve.go:314-321`). Don't let the
   answer depend on per-instance state.
 - **An error before any instance exists is `NotSafeToRetry`**, whatever your code would have said
-  (`serve.go:319`).
+  (`serve.go:320`).
 
 ### A failure on the host's side is always `NotSafeToRetry`
 
@@ -985,7 +1051,7 @@ slow. Without the tag, `go test ./...` never builds it. Run the suite with
 `go test -tags e2e -count=1 ./e2e/`. It looks for the infrena source in `INFRENA_SRC`, or next to this
 repository by default, and skips if the source isn't there (`e2e/e2e_test.go:37-45`, in `TestMain`).
 
-Its main test, `TestTheWorkflow` (`e2e/e2e_test.go:172`), walks the whole workflow against one project: explain,
+Its main test, `TestTheWorkflow` (`e2e/e2e_test.go:197`), walks the whole workflow against one project: explain,
 plan, apply (with a clean re-plan), a hand edit planning as a forced replacement and its repair, a
 removed optional attribute converging, an injected failure failing the apply once, removing a
 resource destroying it, discover plus import adopting what infrena did not create, and finally
@@ -1095,7 +1161,7 @@ job has tests that keep passing when the host's check is broken, and so it hides
 supposed to guard against.
 
 1. **Bookkeeping is never sent, so it can't be dropped.** Dependencies, lifecycle and timestamps never
-   reach the plugin, and are re-attached to results (`adapter.go:303-318`). *Prevents:* losing
+   reach the plugin, and are re-attached to results (`adapter.go:309-324`). *Prevents:* losing
    `Lifecycle`, which makes a `prevent_destroy` guard vanish with no error, and losing
    `Dependencies`, which is the only destroy-ordering information once a resource has left
    configuration.
@@ -1110,16 +1176,16 @@ supposed to guard against.
    are reserved because an instance's `defaults:` accepts them for every resource, and it does not
    accept `ignore_changes` (`lifecycleFor`, `internal/compiler/bind.go`).
 2. **Sensitivity is forced from the schema.** Every value for a `Sensitive` attribute is marked,
-   whatever the plugin sent (`adapter.go:348-353`). *Prevents:* a plugin that forgets the flag
+   whatever the plugin sent (`adapter.go:354-359`). *Prevents:* a plugin that forgets the flag
    putting a password into a plan, a report, or configuration generated by `import --generate`.
 3. **Provenance belongs to the host.** Every returned value is stamped as coming from the provider
-   (`adapter.go:354-357`). *Prevents:* a plugin claiming a value came from the user's configuration,
+   (`adapter.go:360-363`). *Prevents:* a plugin claiming a value came from the user's configuration,
    which would make a plan credit the wrong file.
 4. **`(nil, nil)` from `Create` or `Update` becomes an error** saying the resource may exist
    untracked (`adapter.go:173-175`, `200-202`, `267-275`). *Prevents:* a real resource being recorded
    as "nothing happened" and orphaned.
 5. **An attribute the schema doesn't declare is refused**, with an error naming it and listing what
-   is declared (`adapter.go:338-346`). *Prevents:* a typo in a returned key being stored in state and
+   is declared (`adapter.go:344-352`). *Prevents:* a typo in a returned key being stored in state and
    showing up in a plan as a change nobody can explain.
 6. **Schemas are validated when the plugin loads.** Each is checked by `Definition.Validate`
    (`adapter.go:72-74`, `pkg/schema/definition.go:79-120`), against the type-prefix rule
@@ -1152,7 +1218,7 @@ supposed to guard against.
 ### Reporting a version
 
 Implement `Version() string` on your `Plugin`. The SDK sends it in the handshake. A plugin that
-doesn't implement it reports `0.0.0` (`pkg/pluginsdk/serve.go:338-348`).
+doesn't implement it reports `0.0.0` (`pkg/pluginsdk/serve.go:339-349`).
 
 Don't hard-code the release number. Default the variable to something that is obviously not a
 release, and stamp the real version at build time with `-ldflags -X`:
@@ -1229,14 +1295,14 @@ to install, and they can act on the complaint (`loader.go:136-140`).
 
 What must stay compatible between infrena and your plugin is the **wire protocol**, not the Go types
 you compiled against (`pkg/pluginproto/proto.go:9-12`). The host accepts a *set* of protocol versions
-(`proto.go:25-59`). A plugin built against an older SDK keeps working as long as its protocol version
+(`proto.go:25-71`). A plugin built against an older SDK keeps working as long as its protocol version
 is in that set, so you don't have to rebuild for every infrena release (`PLAN.md` §61.3). Under
 infrena's own versioning rules, a minor release may add a protocol version but must keep the previous
 one, and only a major release may drop one (`PLAN.md` §61.1). If the set no longer includes your
 version, the user gets an error naming your plugin, its path, both sides' versions, and which one to
 upgrade (`internal/pluginhost/errors.go:23-46`).
 
-**infrena:** v0.3.0 raised `pluginproto.Version` to 2 and made `Supported` `{2, 1}` (`proto.go:25-59`).
+**infrena:** v0.3.0 raised `pluginproto.Version` to 2 and made `Supported` `{2, 1}` (`proto.go:25-71`).
 The messages kept their shape. The schema payload gained `optional` and `aliases`, and because an
 attribute decodes leniently, an older host would silently drop both, so a plugin relying on them must
 be refused by that host rather than half-work. Every plugin built against v0.3.0 announces 2, whether
@@ -1244,9 +1310,16 @@ or not it uses either field; one built against v0.2.0 still announces 1 and stil
 what changes your manifest's `protocol` ([section 12](#protocol-what-this-releases-binary-speaks)).
 
 **infrena:** v0.6.0 raised `pluginproto.Version` to 3 and made `Supported` `{3, 2, 1}`
-(`proto.go:43-59`), for the same reason: the schema payload gained `references` and `fields`
+(`proto.go:43-71`), for the same reason: the schema payload gained `references` and `fields`
 ([section 3](#declaring-either-needs-infrena-v060-and-protocol-3)). Every plugin built against v0.6.0
 announces 3.
+
+**infrena:** v0.7.0 raised `pluginproto.Version` to 4 and made `Supported` `{4, 3, 2, 1}`
+(`proto.go:52-71`). This time the discover *message* gained keys, `system_owned` and
+`system_owned_reason` (`proto.go:237-248`), rather than the schema payload, and the reason is the
+same: an older host would drop them silently
+([section 2](#systemowned-resources-the-cloud-created-for-itself)). Every plugin built against v0.7.0
+announces 4, whether or not it sets the flag.
 
 Because of that, `pkg/pluginproto` "changes additively, and any removal bumps `protocol`" (`PLAN.md`
 §31.1, "Handshake and version") — a new optional field on the wire is not a protocol bump. `pkg/value`
@@ -1267,7 +1340,7 @@ at a checkout of infrena next to your plugin, for local work:
 
 ```
 // go.mod
-require github.com/infrena/infrena v0.6.1
+require github.com/infrena/infrena v0.7.0
 
 replace github.com/infrena/infrena => ../infrena
 ```
@@ -1391,17 +1464,18 @@ version: 0.3.0
 # pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
 # and a later host protocol bump forces no re-release: the host keeps accepting older versions.
-protocol: [3]
+protocol: [4]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrena without a cloud account.
-# The oldest infrena release this plugin is tested with: 0.6.0, the release go.mod requires, so the
-# floor is the release CI builds and runs the e2e suite with. 0.6.0 added provider-declared
-# references (fake.database's network accepts ${network}) and protocol 3, which is what this binary
-# speaks; 0.5.0 changed the configuration grammar (a variable is ${var.x}). Releases before 0.4.0
-# are infrata, with a different module path, CLI and plugin binary name.
+# The oldest infrena release this plugin is tested with: 0.7.0, the release go.mod requires, so the
+# floor is the release CI builds and runs the e2e suite with. 0.7.0 raised the plugin protocol to 4,
+# which is what this binary speaks, so an older host refuses it at the handshake; 0.6.0 added
+# provider-declared references (fake.database's network accepts ${network}); 0.5.0 changed the
+# configuration grammar (a variable is ${var.x}). Releases before 0.4.0 are infrata, with a
+# different module path, CLI and plugin binary name.
 # Nothing refuses a mismatched host at runtime yet; infrena checks this at install (PLAN.md §31.3),
 # which is designed but not built.
-infrena: ">= 0.6.0"
+infrena: ">= 0.7.0"
 source: https://github.com/infrena/infrena-provider-fake
 ```
 
@@ -1464,7 +1538,8 @@ Three consequences follow:
 3. **Your next release changes `protocol` in the same commit as its infrena `require` bump**, because
    the rebuilt binary announces the new number. This repository went to `protocol: [2]` in the commit
    that moved `go.mod` to `github.com/infrata/infrata v0.3.0`, as the module was named then, and to
-   `protocol: [3]` in the commit that required `github.com/infrena/infrena v0.6.0`.
+   `protocol: [3]` in the commit that required `github.com/infrena/infrena v0.6.0`, and to
+   `protocol: [4]` in the commit that required `v0.7.0`.
 
 Two checks enforce the third here. `internal/fake/manifest_test.go` requires `protocol` to be exactly
 `[pluginproto.Version]`, and `scripts/release-check` refuses a manifest whose `protocol` is not
@@ -1523,9 +1598,9 @@ requires, must satisfy the floor outright, so a floor above the tested release f
 reporting a suffix is a development build, and gets `AllowsInfrena`'s own rule rather than a second
 copy of it: `0.0.0-dev` is exempt, and a pseudo-version compares as its `MAJOR.MINOR.PATCH`, so it
 passes exactly when it was built after a release the floor admits (`0.4.1-0.<time>-<hash>` passes
-`>= 0.4.0`; a checkout from before `v0.4.0` fails). This repository's `infrena: ">= 0.6.0"` is the
-release `go.mod` requires, and the first that understands the `References` its schema declares.
-`internal/fake/manifest_test.go` separately checks the floor refuses `0.5.x` and admits `0.6.0`.
+`>= 0.4.0`; a checkout from before `v0.4.0` fails). This repository's `infrena: ">= 0.7.0"` is the
+release `go.mod` requires, and the first that speaks protocol 4, which its binary announces.
+`internal/fake/manifest_test.go` separately checks the floor refuses `0.6.x` and admits `0.7.0`.
 
 ### What it deliberately leaves out
 
@@ -1888,8 +1963,8 @@ exist — see [Import IDs](#import-ids) below for the ambiguity refusal and `--p
 ### Discover against a real API
 
 **infrena:** `Walk` asks each **instance** only about types it offers and that were requested. It
-skips an instance that offers none of them (`internal/discovery/walk.go:48-59`). It then sorts every
-result by type and provider ID before naming them (`walk.go:79-85`), so your order doesn't affect
+skips an instance that offers none of them (`internal/discovery/walk.go:55-66`). It then sorts every
+result by type and provider ID before naming them (`walk.go:88-94`), so your order doesn't affect
 output. For how the host treats undeclared types and attributes, see
 [`Discover` and `Import`](#discover-and-import): an undeclared type is skipped, but an undeclared
 attribute on a declared type fails the whole discovery.
@@ -1903,6 +1978,9 @@ attribute on a declared type fails the whole discovery.
   loses nothing ([section 6](#6-cancellation)).
 - **Loop over `discover_regions`** and use each region's client.
 - **Include resources infrena did not create.** Finding those is the only reason discovery exists.
+  Don't filter out the ones it manages either: the host does that, across every environment.
+- **Flag the default VPC, default security groups and service-linked roles as `SystemOwned`**, with
+  a reason ([`SystemOwned`](#systemowned-resources-the-cloud-created-for-itself)).
 - **Return only attributes your schema declares**, including `region`.
 - Sort by provider ID if you like, for stable unit tests. The host sorts anyway.
 
@@ -1910,8 +1988,8 @@ attribute on a declared type fails the whole discovery.
 
 **infrena:** `infrena import <env> <type>.<provider id>` doesn't pass an arbitrary string to your
 plugin. It runs discovery, looks the selector up among the results as `<type>.<provider id>`, and
-calls `Import` with the discovered type and provider ID (`internal/cli/import.go:161`,
-`selectForImport` at `:232`). A selector discovery didn't return is refused with `not found by
+calls `Import` with the discovered type and provider ID (`internal/cli/import.go:192`,
+`selectForImport` at `:271`). A selector discovery didn't return is refused with `not found by
 discovery`. A slash in the ID is fine: the selector is matched whole, so
 `aws.vpc.us-east-1/vpc-0abc123` works if `Discover` returned `us-east-1/vpc-0abc123`. **A resource in
 a region your instance doesn't scan can't be imported at all.** `selectForImport` only matches what
@@ -1921,7 +1999,7 @@ simply isn't offered.
 
 **A selector names no provider instance** — `<type>.<provider id>` is the whole syntax — and a
 provider ID is unique within an account, not across them (§12.1), so two instances of your plugin can
-each hold `net-1`. `narrowToSelectors` (`internal/cli/import.go:260`, corrected 2026-09-13) refuses an
+each hold `net-1`. `narrowToSelectors` (`internal/cli/import.go:409`, corrected 2026-09-13) refuses an
 ambiguous selector rather than silently picking one, naming every instance that holds it:
 
 ```

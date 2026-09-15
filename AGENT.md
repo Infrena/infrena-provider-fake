@@ -71,7 +71,7 @@ feature complete, so fetching the module needs credentials. The `replace` points
 setup:
 
 ```
-require github.com/infrena/infrena v0.6.1
+require github.com/infrena/infrena v0.7.0
 
 replace github.com/infrena/infrena => ../infrena
 ```
@@ -79,7 +79,8 @@ replace github.com/infrena/infrena => ../infrena
 v0.4.0 is the oldest release a require can name: it is the first under the Infrena name, and v0.3.0
 and earlier were published as `github.com/infrata/infrata`. v0.5.0 is the first whose configuration
 grammar writes a variable as `${var.x}`, the syntax these documents use. v0.6.0 added `References`
-and `Fields` on an attribute, and protocol 3.
+and `Fields` on an attribute, and protocol 3. v0.7.0 added `SystemOwned` on a discovered resource,
+and protocol 4.
 
 Nothing else is needed: the SDK and everything it depends on is the standard library only, so
 there is no other third-party dependency to pull in.
@@ -182,7 +183,7 @@ type Provider interface {
 | `Create` | the created resource, **never `(nil, nil)`** | see below |
 | `Update` | the updated resource, **never `(nil, nil)`** | make the resource match `desired` — including removing what `desired` no longer has; `desired` carries only the computed values infrena has observed, so never delete a computed attribute just because `desired` lacks it |
 | `Delete` | error only | deleting something already gone should succeed |
-| `Discover` | everything that exists of the requested types | including resources infrena does not manage. `DiscoverRequest` carries only `Types` — there is no region field; a plugin that scans several regions takes them from its own instance `config:` (§10) |
+| `Discover` | everything that exists of the requested types | including resources infrena does not manage; the host hides the managed ones and names each result, so don't do either. Set `SystemOwned` and a `SystemOwnedReason` on a resource the cloud created for itself (infrena v0.7.0, protocol 4): `import` then skips it unless a selector names it. `DiscoverRequest` carries only `Types` — there is no region field; a plugin that scans several regions takes them from its own instance `config:` (§10) |
 | `Import` | one resource by the cloud's own ID | `(nil, nil)` becomes "no such resource" |
 
 **Never return `(nil, nil)` from `Create` or `Update`.** The host turns it into an error saying the
@@ -281,10 +282,17 @@ by `schema.ValidateAll`, which infrena's host adapter runs on every load since v
 `plugintest.Open` refuses it too; on v0.6.0 only the CLI path did), `References` inside `Fields` (only a
 top-level declaration is ever consulted), and `Fields` on an attribute that is not `KindMap`.
 
-**Declaring either needs infrena v0.6.0:** they travel in the protocol 3 schema, which an older host
-would decode leniently and silently drop. Require v0.6.0, write `protocol: [3]` and an
+**Declaring either needs infrena v0.6.0 or later:** they travel in the protocol 3 schema, which an
+older host would decode leniently and silently drop. On v0.6.x that meant `protocol: [3]` and an
 `infrena: ">= 0.6.0"` floor. If an attribute has both `References` and `Aliases`, make the floor
 `>= 0.6.2`: before v0.6.2, writing the alias (`vpc: ${vpc}`) wrongly reported "declares no reference".
+Built against v0.7.0, your binary speaks protocol 4 whatever it declares, so write `protocol: [4]` and
+`infrena: ">= 0.7.0"`.
+
+`References` also shapes `import --generate` (v0.7.0): when a resource and the resource it refers to
+are imported together, the generated file writes `network: ${network-net-77}` instead of the literal
+id, and import records the matching dependency in state. An undeclared reference stays a literal
+with no edge, so declare every one accurately.
 
 `Requirements` is what gives a user missing-dependency detection: infrena reports what is missing,
 with a suggested fix, instead of letting your API call fail.
@@ -450,7 +458,8 @@ that does not exist.
   plugin built against an older SDK keeps working for as long as its protocol version is supported.
   You do not have to rebuild for every infrena release. (v0.3.0, released as infrata, raised the
   protocol to 2, for `Optional` and `Aliases` in schemas; v0.6.0 raised it to 3, for `References`
-  and `Fields`; infrena v0.6.0 still accepts 2 and 1.)
+  and `Fields`; v0.7.0 raised it to 4, for `SystemOwned` on a discovered resource; infrena v0.7.0
+  still accepts 3, 2 and 1.)
 
 ### The manifest
 
@@ -460,10 +469,10 @@ Every plugin repository ships a `plugin.yaml` at its root (infrena `PLAN.md` §3
 manifest: 2
 name: hetzner
 version: 1.2.0
-protocol: [3]
+protocol: [4]
 platforms: [linux/amd64, linux/arm64, darwin/arm64, windows/amd64]
 description: A provider for Hetzner Cloud.
-infrena: ">= 0.6.0"
+infrena: ">= 0.7.0"
 source: https://github.com/example/infrena-plugin-hetzner
 ```
 
@@ -580,7 +589,14 @@ evidence, and AWS worked through as an example.
   path. Give a per-environment `providers:` value a `default:` or a `vars/default.yml` entry if
   bare `discover` must resolve it too, or pass `--var` to `discover` itself.
 - **Discover:** only the requested types, one API family per type; paginate; check `ctx` between
-  pages; include resources infrena did not create.
+  pages; include resources infrena did not create, and don't filter out ones it manages (the host
+  does, in every environment).
+- **Recommendation: flag what AWS created for itself as `SystemOwned`** (infrena v0.7.0, protocol 4),
+  with a `SystemOwnedReason` a user can act on: the account's default VPC (`IsDefault`), each VPC's
+  default security group (`GroupName` `default`), service-linked roles (path `/aws-service-role/`).
+  The engine never infers it, because spotting those is AWS knowledge. `discover` still lists them
+  with your reason; `import` skips them unless a selector names one, so a user never adopts, and
+  later destroys, a default VPC by accident.
 - **Import:** `infrena import` picks from what `Discover` returned, matched as
   `<type>.<provider id>`. So use one ID form everywhere, carrying anything `Import` needs that isn't in
   the ID alone (for AWS, `<region>/<id>`). Refuse an ID of the wrong type. A selector names no
@@ -629,8 +645,11 @@ evidence, and AWS worked through as an example.
 - [ ] Adding `References` to an attribute that already exists is a breaking release for your users
       (it type-checks `${x.attr}` they already wrote); version and release-note it as one
 - [ ] `Fields` only on a map whose keys you genuinely know; tags and labels stay open (nil)
-- [ ] Declaring `References` or `Fields` means requiring infrena >= v0.6.0, `protocol: [3]`, and an
-      `infrena: ">= 0.6.0"` floor
+- [ ] Declaring `References` or `Fields` means requiring infrena >= v0.6.0; built against v0.7.0,
+      that is `protocol: [4]` and an `infrena: ">= 0.7.0"` floor
+- [ ] `Discover` sets `SystemOwned`, with a `SystemOwnedReason`, on every resource the cloud created
+      for itself (a default VPC, a service-linked role), and on nothing a user created; needs
+      infrena v0.7.0 and protocol 4
 - [ ] `Create` and `Update` never return `(nil, nil)`
 - [ ] Values decode and encode through `pkg/value`, never a hand-rolled decoder that rejects a wire
       field it doesn't recognise — the host adds those additively, without a protocol bump
