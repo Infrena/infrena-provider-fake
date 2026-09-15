@@ -92,8 +92,9 @@ checkout pairs a host built from one infrena with an SDK compiled against anothe
 that: it drops the replace and builds the host from the same tag.)
 
 Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.6.0"` is
-the minor release `go.mod`'s require (v0.6.1) belongs to — v0.6.1 only moved a host-side check, so a
-v0.6.0 host runs this binary identically and the floor stays — and is not enforced
+the minor release `go.mod`'s require (v0.6.1) belongs to — v0.6.1 moved a host-side check and made
+`schema.ValidateAll` (compiled into this binary) refuse a nil instead of panicking, which changes no
+valid input, so a v0.6.0 host runs this binary identically and the floor stays — and is not enforced
 at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.5.x and admits 0.6.0 — and its
 `protocol: [3]` is exactly the `pluginproto.Version`
 that require's SDK speaks — the amended §31.2 defines `protocol:` as what this release's binary
