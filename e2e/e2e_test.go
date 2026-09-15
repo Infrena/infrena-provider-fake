@@ -147,11 +147,12 @@ func planOps(t *testing.T, dir string) map[string]string {
 }
 
 // planArtifact returns the plan artifact from a `plan --output` file, in either shape infrena has
-// written. Up to report version 1 (infrena v0.6.x) the file IS the artifact. From report version 2
-// it is the NDJSON report stream, and the artifact rides verbatim on its `{"type":"plan","plan":…}`
-// line (infrena pkg/report, PlanLine). CI's gating job tests the release go.mod requires while its
-// advisory job tests infrena main, so both shapes are live at once. infrena's own `apply --plan`
-// reads both for the same reason.
+// written. From report version 2 (infrena v0.7.0, the release go.mod requires, so the shape every
+// run of this suite now sees) it is the NDJSON report stream, and the artifact rides verbatim on its
+// `{"type":"plan","plan":…}` line (infrena pkg/report, PlanLine). Up to report version 1 (infrena
+// v0.6.x) the file IS the artifact. The bare shape stays accepted on purpose: a plan saved to disk by
+// an older release is still a file a user may hold, and infrena's own `apply --plan` still reads
+// both envelopes for the same reason.
 func planArtifact(t *testing.T, data []byte) []byte {
 	t.Helper()
 	if json.Valid(data) {

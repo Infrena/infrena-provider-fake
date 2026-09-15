@@ -48,17 +48,16 @@ func TestTheManifestDescribesThisPlugin(t *testing.T) {
 }
 
 // TestTheManifestFloorIsTheRequiredRelease. The floor is the release go.mod requires and CI tests,
-// infrena 0.6.0: the release that added provider-declared references, which fake.database's network
-// declares and this repository's examples use (`network: ${network}`), and protocol 3, which this
-// binary speaks. It must refuse 0.5.x, whose host knows no References and speaks at most protocol 2,
-// and everything before that, and admit 0.6.0. Checked with release versions, which AllowsInfrena
+// infrena 0.7.0: the release that raised the plugin protocol to 4, which this binary speaks. It must
+// refuse 0.6.x, whose host speaks at most protocol 3 and so refuses this binary at the handshake,
+// and everything before that, and admit 0.7.0. Checked with release versions, which AllowsInfrena
 // does not exempt the way it does 0.0.0.
 func TestTheManifestFloorIsTheRequiredRelease(t *testing.T) {
 	m := readManifest(t)
 	if m.Infrena.IsZero() {
 		t.Fatal("plugin.yaml has no infrena: floor, so it claims to work with infrata-named releases too")
 	}
-	for version, want := range map[string]bool{"0.3.9": false, "0.4.9": false, "0.5.0": false, "0.5.9": false, "0.6.0": true, "0.6.1": true} {
+	for version, want := range map[string]bool{"0.3.9": false, "0.4.9": false, "0.5.9": false, "0.6.0": false, "0.6.2": false, "0.6.9": false, "0.7.0": true, "0.7.1": true} {
 		if got := m.AllowsInfrena(version); got != want {
 			t.Errorf("plugin.yaml's infrena: %q allows %s = %v, want %v", m.Infrena, version, got, want)
 		}

@@ -2,15 +2,18 @@ module github.com/infrena/infrena-provider-fake
 
 go 1.27.0
 
-require github.com/infrena/infrena v0.6.1
+require github.com/infrena/infrena v0.7.0
 
 require gopkg.in/yaml.v3 v3.0.1 // indirect
 
-// The require is the infrena RELEASE this plugin is built and tested against: v0.6.1 (whose host adapter checks references on every load), a patch on v0.6.0, the release
-// that added provider-declared references (schema.Attribute.References, which fake.database's
-// network declares) and raised the plugin protocol to 3, which is therefore what this binary
-// speaks. v0.5.0 before it changed the configuration grammar to write a variable as ${var.x}, which
-// every example in this repository uses. v0.4.0 is the oldest release a require on this path can
+// The require is the infrena RELEASE this plugin is built and tested against: v0.7.0, which raised
+// the plugin protocol to 4 (a discovered resource can carry SystemOwned, which this plugin never
+// sets: its cloud creates nothing for itself), so protocol 4 is what this binary speaks. v0.7.0 also
+// made plan --output write the report stream, type-prefixed discovered names, and taught
+// import --generate to emit references from schema.Attribute.References. v0.6.0 before it added
+// those References (fake.database's network declares one) and protocol 3; v0.6.1 made its host
+// adapter check references on every load. v0.5.0 changed the configuration grammar to write a
+// variable as ${var.x}, which every example in this repository uses. v0.4.0 is the oldest release a require on this path can
 // name: Infrata was renamed Infrena on 2026-09-14, and tags v0.1.0 to v0.3.0 declare the old path,
 // github.com/infrata/infrata.
 //
