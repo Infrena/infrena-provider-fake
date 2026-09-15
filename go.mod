@@ -2,11 +2,11 @@ module github.com/infrena/infrena-provider-fake
 
 go 1.27.0
 
-require github.com/infrena/infrena v0.6.0
+require github.com/infrena/infrena v0.6.1
 
 require gopkg.in/yaml.v3 v3.0.1 // indirect
 
-// The require is the infrena RELEASE this plugin is built and tested against: v0.6.0, the release
+// The require is the infrena RELEASE this plugin is built and tested against: v0.6.1 (whose host adapter checks references on every load), a patch on v0.6.0, the release
 // that added provider-declared references (schema.Attribute.References, which fake.database's
 // network declares) and raised the plugin protocol to 3, which is therefore what this binary
 // speaks. v0.5.0 before it changed the configuration grammar to write a variable as ${var.x}, which

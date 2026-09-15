@@ -607,10 +607,12 @@ a reference. A reference on a brand-new attribute breaks nothing.
 
 - **A dangling `Type` or `Attribute`:** `fake.database: attribute "network" refers to fake.network.ident, and fake.network has no attribute "ident"`.
   `Attribute` must be the target's **canonical** name, never an alias. This is `schema.ValidateAll`,
-  which needs the whole set of definitions. infrena's registry runs it when the CLI loads your plugin
-  (`checkDefinitions`, `internal/registry/registry.go`). **`plugintest.Open` does not:** the host
-  adapter runs only each definition's own `Validate` (`internal/pluginhost/adapter.go:72`). So call
-  `schema.ValidateAll(definitions())` in a unit test, as `internal/fake/definitions_test.go` does.
+  which needs the whole set of definitions. Since infrena v0.6.1 the host adapter runs it on every
+  load (`internal/pluginhost/adapter.go`), so it covers a real plugin subprocess and `plugintest.Open`
+  alike, and a dangling reference fails your protocol tests. On v0.6.0 only the CLI's registry ran it
+  and `plugintest.Open` did not, which is why this repository requires v0.6.1.
+  `internal/fake/definitions_test.go` still calls `schema.ValidateAll` directly. It's cheap, and it
+  fails right at the definitions rather than at a protocol load.
 - **A `References` nested inside `Fields`.** Only a top-level attribute's declaration is ever
   consulted, so a nested one would do nothing, and is refused rather than ignored.
 
@@ -1257,7 +1259,7 @@ at a checkout of infrena next to your plugin, for local work:
 
 ```
 // go.mod
-require github.com/infrena/infrena v0.6.0
+require github.com/infrena/infrena v0.6.1
 
 replace github.com/infrena/infrena => ../infrena
 ```

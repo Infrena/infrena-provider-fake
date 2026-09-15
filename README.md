@@ -20,7 +20,7 @@ no network and no credentials.
 
 A local build uses a sibling checkout of infrena: infrena stays private until it is feature
 complete, so fetching the module needs credentials a casual build shouldn't. `go.mod` requires
-infrena v0.6.0, and CI builds against exactly that tag.
+infrena v0.6.1, and CI builds against exactly that tag.
 Lay the two repositories out side by side:
 
 ```
@@ -30,7 +30,7 @@ some-directory/
 ```
 
 `go.mod`'s `replace github.com/infrena/infrena => ../infrena` assumes exactly that layout. It builds
-whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.6.0`) when
+whatever that checkout holds, so check out the required tag (`git -C ../infrena checkout v0.6.1`) when
 you want a local result that means what CI's does. Then:
 
 ```bash

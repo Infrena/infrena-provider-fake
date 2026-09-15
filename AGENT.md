@@ -71,7 +71,7 @@ feature complete, so fetching the module needs credentials. The `replace` points
 setup:
 
 ```
-require github.com/infrena/infrena v0.6.0
+require github.com/infrena/infrena v0.6.1
 
 replace github.com/infrena/infrena => ../infrena
 ```
@@ -277,8 +277,8 @@ declare.
 (open); a `Fields` list on them is a schema lying about a shape.
 
 **Load-time refusals:** `References` naming a type or attribute your plugin does not serve (checked
-by `schema.ValidateAll`, which infrena's registry runs when the CLI loads you — `plugintest.Open`
-does not, so call `schema.ValidateAll(defs)` in a unit test), `References` inside `Fields` (only a
+by `schema.ValidateAll`, which infrena's host adapter runs on every load since v0.6.1, so
+`plugintest.Open` refuses it too; on v0.6.0 only the CLI path did), `References` inside `Fields` (only a
 top-level declaration is ever consulted), and `Fields` on an attribute that is not `KindMap`.
 
 **Declaring either needs infrena v0.6.0:** they travel in the protocol 3 schema, which an older host
