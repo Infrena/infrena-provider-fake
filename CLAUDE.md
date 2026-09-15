@@ -37,16 +37,18 @@ dependency is one an outside author has too.
 **Built and passing.** The plugin (`internal/fake/`: cloud file, schemas, CRUD with attribute
 removal, discover/import, failure/latency injection, a per-file lock, plugin configuration) and its
 binary (`cmd/infrena-plugin-fake/`) are complete and documented, with a version-gated release
-workflow that has published v0.1.0, v0.1.1 and v0.2.0. Those three predate the rename and carry the
+workflow that has published v0.1.0, v0.1.1, v0.2.0 and v0.3.0. v0.3.0 (2026-09-14, release run
+34918230926) is the first under the Infrena name: `infrena-plugin-fake`, infrena >= 0.6.0, protocol 3,
+`manifest: 2`, and breaking because `fake.database.network` gained a `References`. The first three predate the rename and carry the
 old names: v0.2.0 was built against infrata v0.3.0, speaks protocol 2, is named
 `infrata-plugin-fake`, was the first cut through ci.yml's gate, and pairs only with infrata ≤ v0.3.0.
 
 **Renamed (2026-09-14).** Infrata was renamed Infrena (a legal name collision): module
 `github.com/infrena/infrena-provider-fake`, binary `infrena-plugin-fake`, `INFRENA_*` variables, and
 `manifest: 2`. infrena v0.4.0 (`e2be8bf`) was the first release under `github.com/infrena/infrena`;
-tags v0.1.0–v0.3.0 declare the old path and cannot satisfy a require on it. No release of this plugin
-has been cut under the new name.
-CI uses the `INFRENA_CHECKOUT_TOKEN` secret; the old `INFRATA_CHECKOUT_TOKEN` is being retired. Before
+tags v0.1.0–v0.3.0 declare the old path and cannot satisfy a require on it. This plugin's v0.3.0 is
+its first release under the new name.
+CI uses the `INFRENA_CHECKOUT_TOKEN` secret; the old `INFRATA_CHECKOUT_TOKEN` was deleted after the renamed CI ran green. Before
 the rename it proved the path (ci.yml's first GitHub run 34797363934 green on both jobs; the release
 path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
 
