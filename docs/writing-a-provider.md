@@ -1430,9 +1430,16 @@ Three things that are easy to get wrong:
   `replace` present **removes** infrena's hashes, because it builds from the directory and has no use
   for them, so the old arrangement needed a unit test to catch a routine tidy and a script to repair
   it. Dropping the `replace` deleted the failure mode rather than the alarm for it.
-- **`go mod tidy` and `go get` ignore `go.work`.** Workspace mode is for building and testing; those
-  two always resolve from the network, so they need the credentials above even when a workspace is
-  making your everyday build local.
+- **A workspace does not make a job credential-free — give every job the credentials.** `go mod
+  tidy` and `go get` ignore `go.work` outright and always resolve from the network. But the subtler
+  half is that even a workspace *build or test* needs them: the workspace supplies infrena's code,
+  yet resolution still reads the **required** module's `go.mod`, so a module whose `go.mod` names a
+  private `require` still reaches the network. Under a `replace` nothing was ever fetched, which is
+  why an advisory job that had run for months can start failing with `could not read Username for
+  'https://github.com': terminal prompts disabled` the moment you drop the `replace`. State it as
+  the rule that survives: **dropping a `replace` for a real `require` changes what a workspace build
+  needs.** This repository hit exactly that and found it only in CI, because no local run on a
+  credentialled machine can reproduce it.
 - **Read the version from `go.mod`, not from `go list -m`.** `go mod edit -json` reads the file alone
   and loads no module graph, so it works before any infrena checkout exists and before credentials
   are configured. Use that one read for both the module and the ref of the e2e host's checkout, so

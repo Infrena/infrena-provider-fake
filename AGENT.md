@@ -114,6 +114,14 @@ So CI's gating job builds the tagged module instead:
 - **Check what resolved:** `go list -m -f '{{.Version}}{{with .Replace}} => {{.Path}}{{end}}'
   github.com/infrena/infrena` must print exactly the required tag. A non-empty `Replace` is how a
   `replace` creeping back into `go.mod` gets caught.
+- **Give EVERY job the credentials, including one that builds through a workspace.** This is the
+  trap, and it is not visible from either file on its own: a `go.work` supplies infrena's code, but
+  resolution still reads the *required* module's `go.mod`, so a workspace build of a module whose
+  `go.mod` names a private `require` still reaches the network. Under a `replace` nothing was ever
+  fetched, so a job that was fine for years starts failing with `could not read Username for
+  'https://github.com': terminal prompts disabled` the moment the `replace` goes. **Dropping a
+  `replace` for a real `require` changes what a workspace build needs.** No local run on a
+  credentialled machine can show you this; this repository found it only in CI.
 
 infrena-provider-fake's `.github/workflows/ci.yml` is a worked example of all five.
 
