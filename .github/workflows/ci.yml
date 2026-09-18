@@ -158,6 +158,15 @@ jobs:
           go-version: "1.27"
           cache-dependency-path: infrena-provider-fake/go.sum
 
+      # Needed even though the workspace supplies infrena from disk. go.mod carries a real require
+      # now rather than a replace, and resolution still reads the required module's go.mod, so a
+      # job without credentials fails with "could not read Username for 'https://github.com'".
+      # The old arrangement never hit this: a replace satisfied infrena entirely from the checkout.
+      - name: Let go fetch the private infrena module
+        env:
+          INFRENA_TOKEN: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
+        run: git config --global url."https://x-access-token:${INFRENA_TOKEN}@github.com/infrena/".insteadOf "https://github.com/infrena/"
+
       # The workspace is what makes this job build against a working tree instead of the pinned
       # release. It is created here, never committed: in the repository it is gitignored, exactly
       # so that this — building against whatever is on disk — has to be asked for.
