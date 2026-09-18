@@ -65,15 +65,11 @@ indistinguishable from a hang.
 
 ### Depending on infrena
 
-Require a released infrena, and add a `replace` for local work. infrena stays private until it is
-feature complete, so fetching the module needs credentials. The `replace` points at the directory
-`git clone` creates next to your plugin, so a fresh clone of both repositories builds with no extra
-setup:
+Require a released infrena, and **do not commit a `replace`**. infrena stays private until it is
+feature complete, so fetching the module needs credentials:
 
 ```
-require github.com/infrena/infrena v0.7.0
-
-replace github.com/infrena/infrena => ../infrena
+require github.com/infrena/infrena v0.11.1
 ```
 
 v0.4.0 is the oldest release a require can name: it is the first under the Infrena name, and v0.3.0
@@ -85,8 +81,23 @@ and protocol 4.
 Nothing else is needed: the SDK and everything it depends on is the standard library only, so
 there is no other third-party dependency to pull in.
 
-**A `replace` builds against whatever is on disk in `../infrena`, committed or not.** A green suite
-proves nothing about an infrena release. So CI drops the `replace` and builds the tagged module:
+**For local work against a checkout of infrena, use a gitignored `go.work`, not a `replace`:**
+
+```bash
+go work init . ../infrena   # once; then add /go.work and /go.work.sum to .gitignore
+```
+
+Both substitute a working tree for the pinned module, and the difference is only which way round
+the default falls — but that is the whole of it. A committed `replace` has to be REMOVED to be
+correct, so every correct build depends on something stripping it first: a CI script, and the
+discipline to keep using it. A `go.work` is invisible to the module graph and absent from a fresh
+clone, so the DEFAULT build is the pinned one and building against a working tree is a deliberate
+local act. Set `GOWORK=off` in CI and releases to say so explicitly, so a stray workspace on a
+runner can never quietly change what you ship.
+
+**Either way, a working-tree build proves nothing about an infrena release:** it compiles whatever
+is on disk in `../infrena`, committed or not. Run `git -C ../infrena status` before trusting one.
+So CI's gating job builds the tagged module instead:
 
 - `GOPRIVATE=github.com/infrena/*`, so Go fetches with git and skips the public proxy and checksum
   database, which can't see a private repository.
@@ -94,14 +105,17 @@ proves nothing about an infrena release. So CI drops the `replace` and builds th
   url."https://x-access-token:${TOKEN}@github.com/infrena/".insteadOf "https://github.com/infrena/"`,
   with the token passed through `env`. Use a fine-grained token scoped to Contents: read-only on
   `infrena/infrena`. A reusable workflow gets it only if its caller says `secrets: inherit`.
-- `go mod edit -dropreplace=github.com/infrena/infrena`, then build and test under the default
-  `-mod=readonly`.
-- **Commit infrena's `go.sum` hashes.** Generate them once, locally, with the `replace` dropped; a
-  hash CI writes for itself verifies nothing. `go mod tidy` run with the `replace` present strips
-  them, so guard against that with a test.
+- `GOWORK=off`, then build and test under the default `-mod=readonly`.
+- **Commit infrena's `go.sum` hashes.** A hash CI writes for itself verifies nothing, and because
+  `GOPRIVATE` bypasses the checksum database, the committed hash is the only thing that would
+  notice a tag being moved. With no `replace` in `go.mod` this maintains itself — `go mod tidy`
+  resolves infrena as a real module and records them. (`go mod tidy` and `go get` ignore `go.work`
+  entirely, so they always need the credentials above, workspace or not.)
+- **Check what resolved:** `go list -m -f '{{.Version}}{{with .Replace}} => {{.Path}}{{end}}'
+  github.com/infrena/infrena` must print exactly the required tag. A non-empty `Replace` is how a
+  `replace` creeping back into `go.mod` gets caught.
 
-infrena-provider-fake's `scripts/ci-use-infrena-tag`, `.github/workflows/ci.yml` and
-`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` are a worked example of all four.
+infrena-provider-fake's `.github/workflows/ci.yml` is a worked example of all five.
 
 ### Keep your module path outside infrena's
 

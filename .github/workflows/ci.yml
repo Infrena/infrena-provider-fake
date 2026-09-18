@@ -2,16 +2,18 @@ name: CI
 
 # Two jobs, answering two different questions.
 #
-#   tag   "Does this plugin work with the infrena it declares?" Builds against the infrena RELEASE
-#         go.mod requires, fetched as a module with the replace dropped, and runs the e2e suite
-#         against a host built from that same tag. This is the job that gates a release.
+#   pinned  "Does this plugin work with the infrena it declares?" Builds against the infrena
+#           RELEASE go.mod requires, fetched as a module, and runs the e2e suite against a host
+#           built from that same tag. This is the job that gates a release.
 #
-#   main  "Has infrena main broken us?" Builds through go.mod's replace against a fresh checkout
-#         of infrena's main, as releases used to. Advisory: a red run here is an early warning
-#         about the NEXT infrena release, not a defect in this plugin against the one it declares.
+#   main    "Has infrena main broken us?" Builds through a go.work workspace against a fresh
+#           checkout of infrena's main. Advisory: a red run here is an early warning about the
+#           NEXT infrena release, not a defect in this plugin against the one it declares.
 #
-# A `replace => ../infrena` compiles whatever is on disk, so a green build through it proves
-# nothing about a real infrena release; that is why the gating job does not use it.
+# go.mod carries NO `replace`, and go.work is gitignored, so the pinned build is what a plain
+# checkout does — CI runs the default rather than having to correct the repository first.
+# `GOWORK: off` on the pinned job is belt and braces: it says the workspace is not wanted here,
+# so a stray go.work could never quietly substitute a working tree for the tagged module.
 
 on:
   push:
@@ -24,16 +26,19 @@ on:
 permissions:
   contents: read
 
+env:
+  # No silent toolchain upgrade: the build must use the Go setup-go installed.
+  GOTOOLCHAIN: local
+  # infrena is private: fetch it with git directly, and skip the public proxy and checksum
+  # database, which cannot see it. go.sum's committed hashes are the integrity check instead.
+  GOPRIVATE: github.com/infrena/*
+
 jobs:
-  tag:
+  pinned:
     name: against the required infrena release
     runs-on: ubuntu-latest
     env:
-      # No silent toolchain upgrade: the build must use the Go setup-go installed.
-      GOTOOLCHAIN: local
-      # infrena is private: fetch it with git directly, and skip the public proxy and checksum
-      # database, which cannot see it. go.sum's committed hashes are the integrity check instead.
-      GOPRIVATE: github.com/infrena/*
+      GOWORK: "off"
     defaults:
       run:
         working-directory: infrena-provider-fake
@@ -49,22 +54,43 @@ jobs:
           # default, which made the module cache restore fail.
           cache-dependency-path: infrena-provider-fake/go.sum
 
+      # Go fetches a GOPRIVATE module with plain git over https. The token goes through the
+      # environment and into git's config, never onto a command line that is echoed. Use a
+      # fine-grained token scoped to Contents: read-only on infrena/infrena.
+      - name: Let go fetch the private infrena module
+        env:
+          INFRENA_TOKEN: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$INFRENA_TOKEN" ]]; then
+            echo "::error::INFRENA_CHECKOUT_TOKEN is empty. A reusable workflow gets no secrets unless its caller passes them (secrets: inherit)."
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${INFRENA_TOKEN}@github.com/infrena/".insteadOf "https://github.com/infrena/"
+
       # go.mod is the single source of truth for the version: the checkout below and the module
       # the build fetches cannot disagree, because both come from this one read.
       #
-      # The assignment is separate from the echo on purpose: a failing command substitution inside
-      # echo's argument does not fail the step, which would write an empty version and let the
-      # checkout below fall back to the default branch. A require that is not a release tag fails here,
-      # naming the reason.
+      # `go mod edit -json` reads the file alone and loads no module graph, so it works before any
+      # infrena checkout exists. The assignment is separate from the echo on purpose: a failing
+      # command substitution inside echo's argument does not fail the step, which would write an
+      # empty version and let the checkout below fall back to the default branch. A require that
+      # is not a release tag — a pseudo-version, or v0.0.0, which names no release — fails here
+      # rather than checking out the wrong infrena.
       - name: Read the infrena release go.mod requires
         id: infrena
         run: |
-          version="$(scripts/ci-use-infrena-tag version)"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          v="$(go mod edit -json | jq -r '.Require[] | select(.Path == "github.com/infrena/infrena") | .Version')"
+          if [[ ! "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::go.mod requires infrena '$v', which is not a release tag (vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
 
-      # The e2e suite's HOST, built from source at the same tag. Deliberately NOT checked out at
-      # ../infrena: a leftover replace would then quietly resolve to it, and the build would never
-      # prove it can fetch the tagged module.
+      # The e2e suite's HOST, built from source at the same tag. Checked out at infrena-host
+      # rather than ../infrena so that nothing on disk can stand in for the fetched module: the
+      # suite is then unambiguously a tagged host against a tagged SDK.
       - uses: actions/checkout@v7
         with:
           repository: infrena/infrena
@@ -73,10 +99,18 @@ jobs:
           # infrena is not public yet; a token with read access to it. Remove once it is.
           token: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
 
-      - name: Build against the tagged infrena module, not a working tree
-        env:
-          INFRENA_TOKEN: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
-        run: scripts/ci-use-infrena-tag use
+      # Under -mod=readonly (the default) with the committed go.sum: a tag whose content no longer
+      # matches the recorded hash fails here rather than being silently re-recorded. A non-empty
+      # Replace would also show up, which is how a `replace` creeping back into go.mod gets caught.
+      - name: Confirm the tagged module is what resolves, not a working tree
+        run: |
+          set -euo pipefail
+          resolved="$(go list -m -f '{{.Version}}{{with .Replace}} => {{.Path}}{{end}}' github.com/infrena/infrena)"
+          if [[ "$resolved" != "${{ steps.infrena.outputs.version }}" ]]; then
+            echo "::error::infrena resolves to '$resolved', not the tagged ${{ steps.infrena.outputs.version }}"
+            exit 1
+          fi
+          echo "building against github.com/infrena/infrena $resolved, fetched as a module"
 
       - name: gofmt
         run: test -z "$(gofmt -l .)"
@@ -104,13 +138,12 @@ jobs:
     runs-on: ubuntu-latest
     # Advisory: never fails the workflow, so it never blocks a merge or a release.
     continue-on-error: true
-    env:
-      GOTOOLCHAIN: local
     defaults:
       run:
         working-directory: infrena-provider-fake
     steps:
-      # go.mod's replace names ../infrena, so both repositories are checked out side by side.
+      # Both repositories side by side, so the workspace below can name ../infrena — the same
+      # layout a local checkout uses, and where the e2e suite looks for its host by default.
       - uses: actions/checkout@v7
         with:
           path: infrena-provider-fake
@@ -124,6 +157,12 @@ jobs:
         with:
           go-version: "1.27"
           cache-dependency-path: infrena-provider-fake/go.sum
+
+      # The workspace is what makes this job build against a working tree instead of the pinned
+      # release. It is created here, never committed: in the repository it is gitignored, exactly
+      # so that this — building against whatever is on disk — has to be asked for.
+      - name: Substitute infrena main for the pinned release
+        run: go work init . ../infrena
 
       - name: test
         run: go test -count=1 ./...

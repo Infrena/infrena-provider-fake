@@ -54,8 +54,20 @@ CI uses the `INFRENA_CHECKOUT_TOKEN` secret; the pre-rename checkout-token secre
 the rename it proved the path (ci.yml's first GitHub run 34797363934 green on both jobs; the release
 path's `secrets: inherit` proven by the v0.2.0 release run 34848477674).
 
-**Requires infrena v0.7.0 (`a6b45c6`),** with `infrena: ">= 0.7.0"`, `protocol: [4]` and go.sum
-carrying the v0.7.0 hashes (plugin `version:` 0.4.0). v0.7.0 raised
+**Requires infrena v0.11.1,** with `infrena: ">= 0.7.0"`, `protocol: [4]` and go.sum carrying the
+v0.11.1 hashes (plugin `version:` 0.4.0). **The require and the floor are different numbers on
+purpose:** the require is the NEWEST infrena this plugin is built and tested against, the floor is
+the OLDEST host that accepts this binary. Only a protocol bump moves the floor.
+
+The pin moved from v0.7.0 to v0.11.1 on 2026-09-17, and it changed no API this plugin uses. Every
+package it compiles against — `pkg/pluginproto`, `pkg/pluginsdk`, `pkg/plugintest`, `pkg/provider`,
+`pkg/schema`, `pkg/value`, `pkg/resource`, `pkg/address`, `pkg/pluginmanifest`, `pkg/semver` — is
+byte for byte what v0.7.0 shipped (`git diff v0.7.0 v0.11.1 -- pkg/` is empty outside the two below).
+v0.8.0–v0.11.1 added the state backend plugin interface (`pkg/backend`, `pkg/backendproto`,
+`pkg/backendsdk`, `pkg/backendtest`), which a provider does not use, and a `state migrate --check`
+result line (`pkg/report`, `Version` 2 → 3), which this repository does not import — the e2e
+`planArtifact` helper scans for a `{"type":"plan"}` line and is indifferent to the meta line's
+version. `pluginproto.Version` is still 4, so `protocol: [4]` did not move either. v0.7.0 raised
 `pluginproto.Version` to 4 (`Supported = {4, 3, 2, 1}`) for `provider.DiscoveredResource.SystemOwned`
 and `SystemOwnedReason`, which this plugin deliberately never sets: its cloud creates nothing for
 itself. v0.7.0 also: `report.Version = 2`, so `plan --output` writes the NDJSON report stream with the
@@ -82,8 +94,9 @@ live example here (README, AGENT.md, the guide, `e2e/testdata/`) uses it. `docs/
 `docs/proposals/` are historical records and keep the old `${x}` spelling on purpose.
 
 CI (`.github/workflows/ci.yml`, on push to `main`, pull requests, and called by `release.yml`) builds
-against the infrena RELEASE `go.mod` requires in its gating `tag` job, and against infrena `main` in
-an advisory `main` job. The implementation followed
+against the infrena RELEASE `go.mod` requires in its gating `pinned` job (`GOWORK=off`, the module
+fetched from git), and against infrena `main` through a `go work init . ../infrena` workspace in an
+advisory `main` job. The implementation followed
 `docs/plans/2026-09-13-port-fake-provider.md`; read that plan (including its verification log and
 the ledger it summarizes) before touching this repository's design, rather than re-planning from
 scratch.
@@ -99,30 +112,53 @@ go test -tags e2e -count=1 -v ./e2e/      # compliance suite against a real infr
 `go test -count=1 ./...` already covers `scripts/` — there is no separate third layer to run for
 it. The `-tags e2e` suite builds `infrena` from a sibling checkout — `$INFRENA_SRC`, default
 `../infrena` — and drives it as a subprocess; it needs that checkout present and buildable, and is
-slower than the plain suite, so it is not part of the default `go test ./...` run. (`$INFRENA_SRC`
-only chooses which infrena the CLI is built from for this suite — locally the plugin itself still
-compiles against `../infrena` through `go.mod`'s `replace`, so pointing `INFRENA_SRC` at a different
-checkout pairs a host built from one infrena with an SDK compiled against another. CI's tag job avoids
-that: it drops the replace and builds the host from the same tag.)
+slower than the plain suite, so it is not part of the default `go test ./...` run.
+
+**`$INFRENA_SRC` chooses the HOST, `go.work` chooses the SDK, and they can disagree.** The suite
+builds its `infrena` binary from `$INFRENA_SRC`, while the plugin it drives is compiled against
+whatever the module graph resolves — the pinned release by default, or `../infrena`'s working tree
+when a `go.work` is present. Point `INFRENA_SRC` at one checkout while a workspace substitutes
+another and you are pairing a host built from one infrena with an SDK compiled against a different
+one, which is a real configuration and occasionally a useful one, but never a result to read as
+"this release works". CI's `pinned` job keeps them together deliberately: `GOWORK=off` for the SDK,
+and a host checked out at the same tag `go.mod` requires.
+
+**Two ways to build, locally:**
+
+- **Pinned, as CI and releases build** — the default, needing nothing:
+  `GOPRIVATE='github.com/infrena/*' go test -count=1 ./...`. This fetches the required version over
+  git, so it needs read credentials for `github.com/infrena/infrena` (`gh auth setup-git`).
+- **Against your sibling checkout** — `go work init . ../infrena`, once. `go.work` is gitignored, so
+  this is a deliberate local act that never reaches a clone. It substitutes that checkout's WORKING
+  TREE, committed or not, so run `git -C ../infrena status` before trusting a result. Undo it by
+  deleting `go.work`, or override it for one command with `GOWORK=off`.
+
+`go mod tidy` and `go get` ignore `go.work` entirely (verified: in a workspace, tidy still resolves
+from the network), so they always need the credentials above — workspace or not.
 
 Release plumbing: `plugin.yaml` (infrena `PLAN.md` §31.2, `manifest: 2`; its `infrena: ">= 0.7.0"` is
-the release `go.mod` requires, and the first host that speaks protocol 4 (a v0.6.x host refuses this
-binary at the handshake) — and is not enforced
-at runtime yet — `internal/fake/manifest_test.go` checks it refuses 0.6.x and admits 0.7.0 — and its
-`protocol: [4]` is exactly the `pluginproto.Version`
-that require's SDK speaks — the amended §31.2 defines `protocol:` as what this release's binary
-speaks, so it changes in the same commit as the require, and `internal/fake/manifest_test.go` and
-`scripts/release-check` both refuse a mismatch), `scripts/release-check`, `scripts/build-release`,
-`scripts/ci-use-infrena-tag`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`.
+the FLOOR — the first host that speaks protocol 4, so a v0.6.x host refuses this binary at the
+handshake — not the release `go.mod` requires, and not enforced at runtime yet;
+`internal/fake/manifest_test.go` checks it refuses 0.6.x and admits 0.7.0. Its `protocol: [4]` is
+exactly the `pluginproto.Version` the required SDK speaks — the amended §31.2 defines `protocol:` as
+what this release's binary speaks, so it changes in the same commit as any require bump that moves
+it, and `internal/fake/manifest_test.go` and `scripts/release-check` both refuse a mismatch),
+`scripts/release-check`, `scripts/build-release`, `.github/workflows/ci.yml`,
+`.github/workflows/release.yml`.
 
-**go.sum carries infrena's hashes on purpose** (the lines for the former module path were removed in the rename). CI's tag job builds under `-mod=readonly`
-with the replace dropped, so it needs them, and a local `go mod tidy` (replace present) strips them.
-`TestGoSumCarriesWhatABuildWithoutTheReplaceNeeds` fails when that happens; restore with
-`scripts/ci-use-infrena-tag sum`, and run the same after bumping the infrena require (then raise
-`plugin.yaml`'s `infrena:` floor to match, and set its `protocol:` to that release's
-`pluginproto.Version`). `Version` defaults to `"0.0.0-dev"` and is
-stamped only by `-ldflags` at release (Ruling R9), so an unstamped build cannot silently satisfy a
-project's `plugins:` constraint or the release gate.
+**When you bump the infrena require:** run `GOWORK=off go mod tidy` (a workspace would hide the
+fetch), then check whether `pluginproto.Version` moved. If it did, `plugin.yaml`'s `protocol:` moves
+in the same commit and the floor becomes that release. If it did not — the usual case, and what the
+v0.11.1 bump was — `protocol:` and the floor both stay exactly where they are. Raising the floor to
+match the require would be a mistake: it would refuse hosts this binary works perfectly well with.
+
+**go.sum carries infrena's hashes on purpose** (the lines for the former module path were removed in
+the rename). CI builds under `-mod=readonly` with `GOWORK=off`, so a missing hash is a build failure
+there. Since the `replace` is gone this now maintains itself: `go mod tidy` resolves infrena as a
+real module and records its hashes, where the old arrangement had tidy strip them and needed a test
+plus a repair script to notice. `internal/fake.Version` defaults to `"0.0.0-dev"` and is stamped
+only by `-ldflags` at release (Ruling R9), so an unstamped build cannot silently satisfy a project's
+`plugins:` constraint or the release gate.
 
 **Known limits:**
 - The `test.*` → `fake.*` rename (D1) is migrated by infrena, not here: state version 1 → 2
@@ -132,11 +168,15 @@ project's `plugins:` constraint or the release gate.
   which infrena no longer ships.
 - Symlinked paths to the same cloud file are not unified into one lock (D5) — two different paths
   naming the same file on disk can still race.
-- `go.mod` carries `replace github.com/infrena/infrena => ../infrena` (D7) for local work, and will for
-  as long as infrena stays private (until it is feature complete, infrena PLAN.md §31.1); a sibling
-  checkout named `infrena` — what `git clone` creates — is required to build or test locally, and a
-  local result reflects that checkout, not the required release. CI drops the replace
-  (`scripts/ci-use-infrena-tag use`), which needs `GOPRIVATE`, the token, and the committed go.sum hashes.
+- Building or testing needs read access to a private module for as long as infrena stays private
+  (until it is feature complete, infrena PLAN.md §31.1): `GOPRIVATE`, git credentials, and the
+  committed go.sum hashes. A sibling checkout is no longer required — that was the old `replace`
+  arrangement (D7), retired on 2026-09-17 along with `scripts/ci-use-infrena-tag`, which existed to
+  strip the `replace` in CI. A committed `replace` has to be REMOVED to be correct, so every
+  release's correctness depended on that script running; a gitignored `go.work` inverts it, leaving
+  the default build the correct one and a working-tree build the deliberate exception. This repo was
+  the last of the three consumer repos still on the old arrangement; `infrena-provider-aws` and
+  `infrena-backend-s3` already worked this way.
 - Nothing here depends on the pre-rename sibling checkout path or names (verified with fresh clones
   and no pre-rename checkout present).
 - Because infrena is private, `GOPRIVATE` also bypasses the checksum database: the committed go.sum
@@ -169,7 +209,7 @@ second. It holds the API surface, the rules, and the failure modes.
 ## Stack and commands
 
 Go 1.27. Infrena's `go.mod` declares that floor as of 2026-09-13, so this module must declare it
-too or it will not build against `../infrena`. The error Go gives for a too-low `go` directive DOES
+too or it will not build against infrena at all. The error Go gives for a too-low `go` directive DOES
 name the module whose requirement it is (`go: <module>@<version> requires go >= X (running go Y;
 …)`) — with `GOTOOLCHAIN=auto` (this repo's default), Go instead fetches a newer toolchain
 silently; the named-module error only surfaces under a pinned `GOTOOLCHAIN=local` on a too-old

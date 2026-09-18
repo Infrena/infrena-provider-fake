@@ -6,15 +6,18 @@ manifest: 2
 name: fake
 version: 0.4.0
 # The protocol THIS RELEASE'S binary speaks: for an SDK-built plugin, exactly one version, the
-# pluginproto.Version of the infrena go.mod requires. It changes in the same commit as that require
+# pluginproto.Version of the infrena go.mod requires. It changes in the same commit as any require
+# bump that moves that constant — most do not; v0.7.0 to v0.11.1 left it at 4
 # (internal/fake/manifest_test.go and scripts/release-check refuse a mismatch), never goes stale,
 # and a later host protocol bump forces no re-release: the host keeps accepting older versions.
 protocol: [4]
 platforms: [linux/amd64, linux/arm64, linux/arm, linux/386, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64]
 description: A fake provider for testing infrena without a cloud account.
-# The oldest infrena release this plugin is tested with: 0.7.0, the release go.mod requires, so the
-# floor is the release CI builds and runs the e2e suite with. 0.7.0 raised the plugin protocol to 4,
-# which is what this binary speaks, so an older host refuses it at the handshake; 0.6.0 added
+# The OLDEST infrena release this plugin works with: 0.7.0, the release that raised the plugin
+# protocol to 4, which is what this binary speaks — an older host refuses it at the handshake.
+# This is deliberately NOT go.mod's require (v0.11.1, the NEWEST infrena the plugin is built and
+# tested against). The floor moves only when the protocol does; raising it to match the require
+# would refuse hosts this binary works perfectly well with. 0.6.0 added
 # provider-declared references (fake.database's network accepts ${network}); 0.5.0 changed the
 # configuration grammar (a variable is ${var.x}). Releases before 0.4.0 predate the rename,
 # with the project's former module path, CLI and plugin binary name.

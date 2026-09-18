@@ -4,9 +4,12 @@ name: Release
 # every platform, the version is stamped by -ldflags and nowhere else, and nothing is published
 # unless the tag, plugin.yaml's version and the binary's reported version agree (infrena PLAN.md §31.2).
 #
-# CI tests against the infrena release this plugin declares (go.mod's require, which plugin.yaml's
-# `infrena:` floor matches), and the archives are built against that same tagged module. ci.yml
-# also runs an advisory job against infrena main; it reports, but does not gate, a release.
+# CI tests against the infrena release this plugin declares (go.mod's require), and the archives
+# are built against that same tagged module. ci.yml also runs an advisory job against infrena main;
+# it reports, but does not gate, a release.
+#
+# plugin.yaml's `infrena:` floor is NOT that require and is not expected to match it: the floor is
+# the oldest host this binary's protocol works with, the require is the newest it is tested with.
 
 on:
   push:
@@ -30,6 +33,10 @@ jobs:
     env:
       GOTOOLCHAIN: local
       GOPRIVATE: github.com/infrena/*
+      # The archives must be built against the tagged module, never a working tree. go.mod has no
+      # replace and go.work is gitignored, so this is already true; saying it means a stray
+      # workspace on the runner cannot quietly change what gets published.
+      GOWORK: "off"
     steps:
       - uses: actions/checkout@v7
 
@@ -37,12 +44,18 @@ jobs:
         with:
           go-version: "1.27"
 
-      # release-check and build-release both compile against infrena, so they get the same tagged
-      # module ci.yml tested, through the same script, rather than a second copy of its setup.
-      - name: Build against the tagged infrena module, not a working tree
+      # release-check and build-release both compile against infrena, so they need the same
+      # credentials ci.yml's pinned job uses to fetch the tagged module.
+      - name: Let go fetch the private infrena module
         env:
           INFRENA_TOKEN: ${{ secrets.INFRENA_CHECKOUT_TOKEN }}
-        run: scripts/ci-use-infrena-tag use
+        run: |
+          set -euo pipefail
+          if [[ -z "$INFRENA_TOKEN" ]]; then
+            echo "::error::INFRENA_CHECKOUT_TOKEN is empty. A reusable workflow gets no secrets unless its caller passes them (secrets: inherit)."
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${INFRENA_TOKEN}@github.com/infrena/".insteadOf "https://github.com/infrena/"
 
       - name: Verify the tag, the manifest and the binary agree
         run: scripts/release-check "$GITHUB_REF_NAME"

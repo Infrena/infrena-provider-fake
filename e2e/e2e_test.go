@@ -4,7 +4,12 @@
 //
 // Not part of `go test ./...`: it builds infrena from source, so it is slow and needs a
 // checkout. Run it with `go test -tags e2e -count=1 ./e2e/`. INFRENA_SRC points at the
-// checkout; the default is the sibling ../infrena that go.mod's replace already assumes.
+// checkout; the default is the sibling ../infrena.
+//
+// INFRENA_SRC chooses the HOST only. The plugin this suite drives is compiled against whatever
+// the module graph resolves — the release go.mod requires, or ../infrena's working tree when a
+// go.work is present — so the two can name different infrenas. CI's pinned job keeps them
+// together: GOWORK=off for the SDK, and a host checked out at the same tag.
 package e2e
 
 import (
