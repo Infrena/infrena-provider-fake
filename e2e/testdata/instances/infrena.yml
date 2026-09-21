@@ -1,0 +1,21 @@
+project: accounts
+
+environments:
+  dev: {}
+
+providers:
+  - plugin: fake
+    name: main
+    default: true
+  - plugin: fake
+    name: acct2
+
+resources:
+  shared:
+    type: fake.network
+    cidr: 10.0.0.0/16
+
+  isolated:
+    type: fake.network
+    provider: acct2
+    cidr: 10.1.0.0/16

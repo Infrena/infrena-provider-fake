@@ -1,0 +1,156 @@
+name: CI
+
+# Two jobs, answering two different questions.
+#
+#   pinned  "Does this plugin work with the infrena it declares?" Builds against the infrena
+#           RELEASE go.mod requires, fetched as a module, and runs the e2e suite against a host
+#           built from that same tag. This is the job that gates a release.
+#
+#   main    "Has infrena main broken us?" Builds through a go.work workspace against a fresh
+#           checkout of infrena's main. Advisory: a red run here is an early warning about the
+#           NEXT infrena release, not a defect in this plugin against the one it declares.
+#
+# go.mod carries NO `replace`, and go.work is gitignored, so the pinned build is what a plain
+# checkout does — CI runs the default rather than having to correct the repository first.
+# `GOWORK: off` on the pinned job is belt and braces: it says the workspace is not wanted here,
+# so a stray go.work could never quietly substitute a working tree for the tagged module.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Called by release.yml, so a release cannot skip these checks.
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  # No silent toolchain upgrade: the build must use the Go setup-go installed.
+  GOTOOLCHAIN: local
+
+jobs:
+  pinned:
+    name: against the required infrena release
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
+    defaults:
+      run:
+        working-directory: infrena-provider-fake
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: infrena-provider-fake
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          # Checked out into a subdirectory; setup-go looks for go.sum at the workspace root by
+          # default, which made the module cache restore fail.
+          cache-dependency-path: infrena-provider-fake/go.sum
+
+      # go.mod is the single source of truth for the version: the checkout below and the module
+      # the build fetches cannot disagree, because both come from this one read.
+      #
+      # `go mod edit -json` reads the file alone and loads no module graph, so it works before any
+      # infrena checkout exists. The assignment is separate from the echo on purpose: a failing
+      # command substitution inside echo's argument does not fail the step, which would write an
+      # empty version and let the checkout below fall back to the default branch. A require that
+      # is not a release tag — a pseudo-version, or v0.0.0, which names no release — fails here
+      # rather than checking out the wrong infrena.
+      - name: Read the infrena release go.mod requires
+        id: infrena
+        run: |
+          set -euo pipefail
+          v="$(go mod edit -json | jq -r '.Require[] | select(.Path == "github.com/infrena/infrena") | .Version')"
+          if [[ ! "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::go.mod requires infrena '$v', which is not a release tag (vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # The e2e suite's HOST, built from source at the same tag. Checked out at infrena-host
+      # rather than ../infrena so that nothing on disk can stand in for the fetched module: the
+      # suite is then unambiguously a tagged host against a tagged SDK.
+      - uses: actions/checkout@v7
+        with:
+          repository: infrena/infrena
+          ref: ${{ steps.infrena.outputs.version }}
+          path: infrena-host
+
+      # Under -mod=readonly (the default) with the committed go.sum: a tag whose content no longer
+      # matches the recorded hash fails here rather than being silently re-recorded. A non-empty
+      # Replace would also show up, which is how a `replace` creeping back into go.mod gets caught.
+      - name: Confirm the tagged module is what resolves, not a working tree
+        run: |
+          set -euo pipefail
+          resolved="$(go list -m -f '{{.Version}}{{with .Replace}} => {{.Path}}{{end}}' github.com/infrena/infrena)"
+          if [[ "$resolved" != "${{ steps.infrena.outputs.version }}" ]]; then
+            echo "::error::infrena resolves to '$resolved', not the tagged ${{ steps.infrena.outputs.version }}"
+            exit 1
+          fi
+          echo "building against github.com/infrena/infrena $resolved, fetched as a module"
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+
+      - name: vet
+        run: go vet ./... && go vet -tags e2e ./e2e/
+
+      - name: test
+        run: go test -count=1 ./...
+
+      - name: e2e against infrena ${{ steps.infrena.outputs.version }}
+        env:
+          INFRENA_SRC: ${{ github.workspace }}/infrena-host
+        # The suite SKIPS, and so passes, when it cannot find its host. Here that is a failure.
+        run: |
+          set -euo pipefail
+          go test -tags e2e -count=1 -v ./e2e/ 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+          if grep -q 'E2E SKIPPED' "$RUNNER_TEMP/e2e.log"; then
+            echo "::error::the e2e suite skipped instead of running against infrena-host"
+            exit 1
+          fi
+
+  main:
+    name: against infrena main (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: never fails the workflow, so it never blocks a merge or a release.
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: infrena-provider-fake
+    steps:
+      # Both repositories side by side, so the workspace below can name ../infrena — the same
+      # layout a local checkout uses, and where the e2e suite looks for its host by default.
+      - uses: actions/checkout@v7
+        with:
+          path: infrena-provider-fake
+      - uses: actions/checkout@v7
+        with:
+          repository: infrena/infrena
+          path: infrena
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache-dependency-path: infrena-provider-fake/go.sum
+
+      # The workspace is what makes this job build against a working tree instead of the pinned
+      # release. It is created here, never committed: in the repository it is gitignored, exactly
+      # so that this — building against whatever is on disk — has to be asked for.
+      - name: Substitute infrena main for the pinned release
+        run: go work init . ../infrena
+
+      - name: test
+        run: go test -count=1 ./...
+
+      - name: e2e against infrena main
+        run: |
+          set -euo pipefail
+          go test -tags e2e -count=1 -v ./e2e/ 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+          if grep -q 'E2E SKIPPED' "$RUNNER_TEMP/e2e.log"; then
+            echo "::error::the e2e suite skipped instead of running against ../infrena"
+            exit 1
+          fi

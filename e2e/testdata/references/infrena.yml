@@ -1,0 +1,19 @@
+project: demo
+
+environments:
+  dev: {}
+
+resources:
+  network:
+    type: fake.network
+    cidr: 10.0.0.0/16
+
+  db:
+    type: fake.database
+    engine: postgres
+    network: ${network}
+
+  app:
+    type: fake.application
+    image: nginx:1.27
+    database_url: ${db.endpoint}

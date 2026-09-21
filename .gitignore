@@ -1,0 +1,7 @@
+/infrena-plugin-fake
+/bin/
+# Local work against a sibling infrena checkout: `go work init . ../infrena`. Deliberately NOT
+# committed — a workspace that shipped in the repository would make a working tree the default
+# build again, which is the arrangement go.mod's comment explains this repo moved away from.
+/go.work
+/go.work.sum
